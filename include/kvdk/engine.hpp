@@ -32,6 +32,9 @@ public:
   static Status Open(const std::string &name, Engine **engine_ptr,
                      const Configs &configs, FILE *log_file = stdout);
 
+  // Get a snapshot of the instance at this moment
+  virtual std::shared_ptr<Snapshot> GetSnapshot() = 0;
+
   // Insert a STRING-type KV to set "key" to hold "value", return Ok on
   // successful persistence, return non-Ok on any error.
   virtual Status Set(const pmem::obj::string_view key,

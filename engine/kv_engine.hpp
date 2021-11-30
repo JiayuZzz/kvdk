@@ -23,6 +23,7 @@
 #include "hash_table.hpp"
 #include "kvdk/engine.hpp"
 #include "logger.hpp"
+#include "mvcc.hpp"
 #include "pmem_allocator/pmem_allocator.hpp"
 #include "queue.hpp"
 #include "skiplist.hpp"
@@ -58,6 +59,10 @@ public:
                  const StringView user_key) override;
   std::shared_ptr<Iterator>
   NewSortedIterator(const StringView collection) override;
+
+  std::shared_ptr<Snapshot> GetSnapshot() override {
+    return std::make_shared<SnapshotImpl>(get_timestamp());
+  }
 
   // Unordered Collection
   virtual Status HGet(StringView const collection_name, StringView const key,
@@ -108,8 +113,13 @@ private:
     ThreadLocalRes() = default;
 
     uint64_t newest_restored_ts = 0;
-    PendingBatch *persisted_pending_batch = nullptr;
     std::unordered_map<uint64_t, int> visited_skiplist_ids;
+
+    PendingBatch *persisted_pending_batch = nullptr;
+
+    SnapshotImpl last_snapshot{kMaxTimestamp};
+
+    std::deque<SizedSpaceEntry> pending_free_space{};
   };
 
   bool CheckKeySize(const StringView &key) { return key.size() <= UINT16_MAX; }
@@ -214,6 +224,19 @@ private:
     return res;
   }
 
+  inline SnapshotImpl currentSnapshot() {
+    return SnapshotImpl(get_timestamp());
+  }
+
+  void backgroundWork() {
+    updateSmallestVersion();
+    pmem_allocator_->BackgroundWork();
+  }
+
+  void updateSmallestVersion();
+
+  inline void delayFree(SizedSpaceEntry &&entry);
+
   inline std::string db_file_name() { return dir_ + "data"; }
 
   inline std::string persisted_pending_block_file(int thread_id) {
@@ -277,6 +300,7 @@ private:
 
   uint64_t ts_on_startup_ = 0;
   uint64_t newest_version_on_startup_ = 0;
+  TimeStampType smallest_version_refered_ = 0;
   std::shared_ptr<HashTable> hash_table_;
 
   std::vector<std::shared_ptr<Skiplist>> skiplists_;

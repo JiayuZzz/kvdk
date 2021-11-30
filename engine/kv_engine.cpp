@@ -88,7 +88,7 @@ void KVEngine::BackgroundWork() {
   while (!closing_) {
     usleep(configs_.background_work_interval * 1000000);
     interval_free_skiplist_node -= configs_.background_work_interval;
-    pmem_allocator_->BackgroundWork();
+    backgroundWork();
     if ((interval_free_skiplist_node -= configs_.background_work_interval) <=
         0) {
       FreeSkiplistDramNodes();
@@ -784,6 +784,8 @@ Status KVEngine::Recovery() {
     }
   }
 
+  smallest_version_refered_ = newest_version_on_startup_;
+
   return Status::Ok;
 }
 
@@ -1341,6 +1343,11 @@ Status KVEngine::StringSetImpl(const StringView &key, const StringView &value) {
   {
     auto hint = hash_table_->GetHint(key);
     std::lock_guard<SpinMutex> lg(*hint.spin);
+    // Set current snapshot to this thread
+    TimeStampType new_ts = get_timestamp();
+    SnapshotSetter setter(thread_res_[write_thread.id].last_snapshot, new_ts);
+
+    // Search position to write index in hash table.
     Status s = hash_table_->SearchForWrite(
         hint, key, StringDeleteRecord | StringDataRecord, &entry_ptr,
         &hash_entry, &data_entry);
@@ -1349,23 +1356,25 @@ Status KVEngine::StringSetImpl(const StringView &key, const StringView &value) {
     }
     bool found = s == Status::Ok;
 
-    void *block_base =
-        pmem_allocator_->offset2addr(sized_space_entry.space_entry.offset);
-
-    uint64_t new_ts = get_timestamp();
     assert(!found || new_ts > data_entry.meta.timestamp);
 
-    StringRecord::PersistStringRecord(block_base, sized_space_entry.size,
-                                      new_ts, StringDataRecord, key, value);
+    // Persist key-value pair to PMem
+    StringRecord::PersistStringRecord(
+        pmem_allocator_->offset2addr(sized_space_entry.space_entry.offset),
+        sized_space_entry.size, new_ts, StringDataRecord, key, value);
 
     auto entry_base_status = entry_ptr->header.status;
+    // Write hash index
     hash_table_->Insert(hint, entry_ptr, StringDataRecord,
                         sized_space_entry.space_entry.offset,
                         HashOffsetType::StringRecord);
+
     if (entry_base_status == HashEntryStatus::Updating) {
-      pmem_allocator_->Free(SizedSpaceEntry(hash_entry.offset,
-                                            data_entry.header.record_size,
-                                            data_entry.meta.timestamp));
+      delayFree(SizedSpaceEntry(hash_entry.offset,
+                                data_entry.header.record_size, new_ts));
+      // pmem_allocator_->Free(SizedSpaceEntry(hash_entry.offset,
+      // data_entry.header.record_size,
+      // data_entry.meta.timestamp));
     } else if (entry_base_status == HashEntryStatus::DirtyReusable) {
       pmem_allocator_->DelayFree(SizedSpaceEntry(hash_entry.offset,
                                                  data_entry.header.record_size,
@@ -1911,6 +1920,34 @@ Status KVEngine::RestoreQueueRecords(DLRecord *pmp_record) {
     kvdk_assert(false, "Wrong type in RestoreDlistRecords!\n");
     return Status::Abort;
   }
+  }
+}
+
+void KVEngine::updateSmallestVersion() {
+  TimeStampType ts = get_timestamp();
+  for (auto &tc : thread_res_) {
+    ts = std::min(tc.last_snapshot.GetTimestamp(), ts);
+  }
+  smallest_version_refered_ = ts;
+}
+
+void KVEngine::delayFree(SizedSpaceEntry &&space_entry) {
+  static constexpr size_t kLimitFree = 5;
+  assert(write_thread.id >= 0);
+  return pmem_allocator_->Free(space_entry);
+
+  auto &pending_free_space = thread_res_[write_thread.id].pending_free_space;
+  pending_free_space.emplace_back(space_entry);
+  size_t free_cnt = 0;
+  while (pending_free_space.front().space_entry.info <
+             smallest_version_refered_ &&
+         free_cnt++ < kLimitFree) {
+    DataEntry *entry = pmem_allocator_->offset2addr<DataEntry>(
+        pending_free_space.front().space_entry.offset);
+    kvdk_assert(entry != nullptr, "Try to free a invalid pmem address");
+    entry->Destroy();
+    pmem_allocator_->Free(pending_free_space.front());
+    pending_free_space.pop_front();
   }
 }
 
