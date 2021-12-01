@@ -637,10 +637,6 @@ Status KVEngine::SearchOrInitCollection(const StringView &collection,
           pmem_allocator_->Free(SizedSpaceEntry(
               hash_entry.offset, existing_data_entry.header.record_size,
               existing_data_entry.meta.timestamp));
-        } else if (entry_base_status == HashEntryStatus::DirtyReusable) {
-          pmem_allocator_->DelayFree(SizedSpaceEntry(
-              hash_entry.offset, existing_data_entry.header.record_size,
-              existing_data_entry.meta.timestamp));
         }
         return Status::Ok;
       }
@@ -986,10 +982,6 @@ Status KVEngine::SSetImpl(Skiplist *skiplist, const StringView &user_key,
         pmem_allocator_->Free(SizedSpaceEntry(hash_entry.offset,
                                               data_entry.header.record_size,
                                               data_entry.meta.timestamp));
-      } else if (entry_base_status == HashEntryStatus::DirtyReusable) {
-        pmem_allocator_->DelayFree(
-            SizedSpaceEntry(hash_entry.offset, data_entry.header.record_size,
-                            data_entry.meta.timestamp));
       }
     }
 
@@ -1248,11 +1240,6 @@ Status KVEngine::StringBatchWriteImpl(const WriteBatch::KV &kv,
           SizedSpaceEntry(hash_entry.offset, data_entry.header.record_size,
                           data_entry.meta.timestamp);
       batch_hint.delay_free = false;
-    } else if (entry_base_status == HashEntryStatus::DirtyReusable) {
-      batch_hint.free_after_finish =
-          SizedSpaceEntry(hash_entry.offset, data_entry.header.record_size,
-                          data_entry.meta.timestamp);
-      batch_hint.delay_free = true;
     }
   }
 
@@ -1375,10 +1362,6 @@ Status KVEngine::StringSetImpl(const StringView &key, const StringView &value) {
       // pmem_allocator_->Free(SizedSpaceEntry(hash_entry.offset,
       // data_entry.header.record_size,
       // data_entry.meta.timestamp));
-    } else if (entry_base_status == HashEntryStatus::DirtyReusable) {
-      pmem_allocator_->DelayFree(SizedSpaceEntry(hash_entry.offset,
-                                                 data_entry.header.record_size,
-                                                 data_entry.meta.timestamp));
     }
   }
 

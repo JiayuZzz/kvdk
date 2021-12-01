@@ -251,7 +251,7 @@ void HashTable::Insert(const KeyHashHint &hint, HashEntry *entry_ptr,
 
   HashEntry new_hash_entry(hint.key_hash_value >> 32, type, offset,
                            (type == StringDeleteRecord)
-                               ? HashEntryStatus::DirtyReusable
+                               ? HashEntryStatus::CleanReusable
                                : HashEntryStatus::Normal,
                            offset_type);
 
