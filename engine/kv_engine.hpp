@@ -109,17 +109,14 @@ private:
     bool delay_free{false};
   };
 
+  struct PendingFreeRecord {
+    HashEntry *hash_entry_ref;
+    SpinMutex *hash_lock_ref;
+    TimeStampType free_ts;
+    void *pmem_record;
+  };
+
   struct ThreadCache {
-    struct HashRef {
-      HashEntry *hash_entry_ref;
-      SpinMutex *hash_lock_ref;
-    };
-
-    struct PendingFreeSpace {
-      SizedSpaceEntry space_entry;
-      HashRef hash_ref;
-    };
-
     ThreadCache() = default;
 
     uint64_t newest_restored_ts = 0;
@@ -129,8 +126,7 @@ private:
 
     SnapshotImpl last_snapshot{kMaxTimestamp};
 
-    std::deque<SizedSpaceEntry> pending_free_space{};
-    std::deque<PendingFreeSpace> pending_free_space_new{};
+    std::deque<PendingFreeRecord> pending_free_records{};
   };
 
   bool CheckKeySize(const StringView &key) { return key.size() <= UINT16_MAX; }
@@ -246,7 +242,10 @@ private:
 
   void updateSmallestVersion();
 
-  inline void delayFree(SizedSpaceEntry &&entry);
+  // Notice: call this function while no any hash table lock holding
+  void handlePendingFreeSpace(PendingFreeRecord &pending_free_record);
+
+  inline void delayFree(PendingFreeRecord &&pending_free_record);
 
   inline std::string db_file_name() { return dir_ + "data"; }
 

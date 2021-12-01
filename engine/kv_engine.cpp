@@ -536,7 +536,7 @@ Status KVEngine::RestoreSkiplistRecord(DLRecord *pmem_record,
       new_hash_offset = (uint64_t)dram_node;
       if (configs_.opt_large_sorted_collection_restore &&
           thread_cache_[write_thread.id]
-                      .visited_skiplist_ids[dram_node->SkiplistId()]++ %
+                      .visited_skiplist_ids[dram_node->SkiplistID()]++ %
                   kRestoreSkiplistStride ==
               0) {
         std::lock_guard<std::mutex> lg(list_mu_);
@@ -1357,11 +1357,9 @@ Status KVEngine::StringSetImpl(const StringView &key, const StringView &value) {
                         HashOffsetType::StringRecord);
 
     if (entry_base_status == HashEntryStatus::Updating) {
-      delayFree(SizedSpaceEntry(hash_entry.offset,
-                                data_entry.header.record_size, new_ts));
-      // pmem_allocator_->Free(SizedSpaceEntry(hash_entry.offset,
-      // data_entry.header.record_size,
-      // data_entry.meta.timestamp));
+      delayFree(
+          PendingFreeRecord{entry_ptr, hint.spin, new_ts,
+                            pmem_allocator_->offset2addr(hash_entry.offset)});
     }
   }
 
@@ -1914,19 +1912,46 @@ void KVEngine::updateSmallestVersion() {
   smallest_version_refered_ = ts;
 }
 
-void KVEngine::delayFree(SizedSpaceEntry &&space_entry) {
-  static constexpr size_t kLimitFree = 5;
-  assert(write_thread.id >= 0);
-  return pmem_allocator_->Free(space_entry);
+void KVEngine::handlePendingFreeSpace(PendingFreeRecord &pending_free_record) {
+  DataEntry *data_entry =
+      static_cast<DataEntry *>(pending_free_record.pmem_record);
+  uint64_t data_offset =
+      pmem_allocator_->addr2offset(pending_free_record.pmem_record);
+  SizedSpaceEntry space_entry_to_free(
+      data_offset, data_entry->header.record_size, data_entry->meta.timestamp);
+  assert(data_offset != kPmemNullOffset);
+  switch (data_entry->meta.type) {
+  case StringDeleteRecord: {
+    if (pending_free_record.hash_entry_ref->offset == data_offset) {
+      std::lock_guard<SpinMutex> lg(*pending_free_record.hash_lock_ref);
+      if (pending_free_record.hash_entry_ref->offset ==
+          pmem_allocator_->addr2offset(pending_free_record.pmem_record)) {
+        pending_free_record.hash_entry_ref->Clear();
+      }
+    }
+    // we don't need to purge a delete record
+    pmem_allocator_->Free(space_entry_to_free);
+    break;
+  }
+  default:
+    data_entry->Destroy();
+    pmem_allocator_->Free(space_entry_to_free);
+    break;
+  }
+}
 
-  auto &pending_free_space = thread_cache_[write_thread.id].pending_free_space;
-  pending_free_space.emplace_back(space_entry);
+void KVEngine::delayFree(PendingFreeRecord &&pending_free_record) {
+  static constexpr size_t kLimitFree = 1;
+  assert(write_thread.id >= 0);
+
+  auto &pending_free_records =
+      thread_cache_[write_thread.id].pending_free_records;
+  pending_free_records.emplace_back(pending_free_record);
   size_t free_cnt = 0;
-  while (pending_free_space.front().space_entry.info <
-             smallest_version_refered_ &&
+  while (pending_free_records.front().free_ts < smallest_version_refered_ &&
          free_cnt++ < kLimitFree) {
-    purgeAndFree(pending_free_space.front());
-    pending_free_space.pop_front();
+    handlePendingFreeSpace(pending_free_records.front());
+    pending_free_records.pop_front();
   }
 }
 
