@@ -144,7 +144,7 @@ Status KVEngine::Init(const std::string &name, const Configs &configs) {
     return s;
   }
 
-  thread_res_.resize(configs_.max_write_threads);
+  thread_cache_.resize(configs_.max_write_threads);
   pmem_allocator_.reset(PMEMAllocator::NewPMEMAllocator(
       db_file_, configs_.pmem_file_size, configs_.pmem_segment_blocks,
       configs_.pmem_block_size, configs_.max_write_threads,
@@ -269,8 +269,8 @@ Status KVEngine::RestoreData(uint64_t thread_id) {
     cnt++;
 
     auto ts_recovering = data_entry_cached.meta.timestamp;
-    if (ts_recovering > thread_res_[thread_id].newest_restored_ts) {
-      thread_res_[thread_id].newest_restored_ts = ts_recovering;
+    if (ts_recovering > thread_cache_[thread_id].newest_restored_ts) {
+      thread_cache_[thread_id].newest_restored_ts = ts_recovering;
     }
 
     Status s(Status::Ok);
@@ -535,8 +535,8 @@ Status KVEngine::RestoreSkiplistRecord(DLRecord *pmem_record,
       }
       new_hash_offset = (uint64_t)dram_node;
       if (configs_.opt_large_sorted_collection_restore &&
-          thread_res_[write_thread.id]
-                      .visited_skiplist_ids[dram_node->SkiplistID()]++ %
+          thread_cache_[write_thread.id]
+                      .visited_skiplist_ids[dram_node->SkiplistId()]++ %
                   kRestoreSkiplistStride ==
               0) {
         std::lock_guard<std::mutex> lg(list_mu_);
@@ -724,7 +724,7 @@ Status KVEngine::RestorePendingBatch() {
           }
 
           if (id < configs_.max_write_threads) {
-            thread_res_[id].persisted_pending_batch = pending_batch;
+            thread_cache_[id].persisted_pending_batch = pending_batch;
           } else {
             remove(pending_batch_file.c_str());
           }
@@ -777,7 +777,7 @@ Status KVEngine::Recovery() {
       pmem_allocator_->PopulateSpace();
     }
   } else {
-    for (auto &ts : thread_res_) {
+    for (auto &ts : thread_cache_) {
       if (ts.newest_restored_ts > newest_version_on_startup_) {
         newest_version_on_startup_ = ts.newest_restored_ts;
       }
@@ -1094,7 +1094,7 @@ Status KVEngine::SDelete(const StringView collection,
 }
 
 Status KVEngine::MaybeInitPendingBatchFile() {
-  if (thread_res_[write_thread.id].persisted_pending_batch == nullptr) {
+  if (thread_cache_[write_thread.id].persisted_pending_batch == nullptr) {
     int is_pmem;
     size_t mapped_len;
     uint64_t persisted_pending_file_size =
@@ -1103,7 +1103,7 @@ Status KVEngine::MaybeInitPendingBatchFile() {
         kPMEMMapSizeUnit *
         (size_t)ceil(1.0 * persisted_pending_file_size / kPMEMMapSizeUnit);
 
-    if ((thread_res_[write_thread.id].persisted_pending_batch =
+    if ((thread_cache_[write_thread.id].persisted_pending_batch =
              (PendingBatch *)pmem_map_file(
                  persisted_pending_block_file(write_thread.id).c_str(),
                  persisted_pending_file_size, PMEM_FILE_CREATE, 0666,
@@ -1156,7 +1156,7 @@ Status KVEngine::BatchWrite(const WriteBatch &write_batch) {
   PendingBatch pending_batch(PendingBatch::Stage::Processing,
                              write_batch.Size(), ts);
   pending_batch.PersistProcessing(
-      thread_res_[write_thread.id].persisted_pending_batch,
+      thread_cache_[write_thread.id].persisted_pending_batch,
       space_entry_offsets);
 
   // Do batch writes
@@ -1345,7 +1345,7 @@ Status KVEngine::StringSetImpl(const StringView &key, const StringView &value) {
     std::lock_guard<SpinMutex> lg(*hint.spin);
     // Set current snapshot to this thread
     TimeStampType new_ts = get_timestamp();
-    SnapshotSetter setter(thread_res_[write_thread.id].last_snapshot, new_ts);
+    SnapshotSetter setter(thread_cache_[write_thread.id].last_snapshot, new_ts);
 
     // Search position to write index in hash table.
     Status s = hash_table_->SearchForWrite(
@@ -1925,7 +1925,7 @@ Status KVEngine::RestoreQueueRecords(DLRecord *pmp_record) {
 
 void KVEngine::updateSmallestVersion() {
   TimeStampType ts = get_timestamp();
-  for (auto &tc : thread_res_) {
+  for (auto &tc : thread_cache_) {
     ts = std::min(tc.last_snapshot.GetTimestamp(), ts);
   }
   smallest_version_refered_ = ts;
@@ -1936,17 +1936,13 @@ void KVEngine::delayFree(SizedSpaceEntry &&space_entry) {
   assert(write_thread.id >= 0);
   return pmem_allocator_->Free(space_entry);
 
-  auto &pending_free_space = thread_res_[write_thread.id].pending_free_space;
+  auto &pending_free_space = thread_cache_[write_thread.id].pending_free_space;
   pending_free_space.emplace_back(space_entry);
   size_t free_cnt = 0;
   while (pending_free_space.front().space_entry.info <
              smallest_version_refered_ &&
          free_cnt++ < kLimitFree) {
-    DataEntry *entry = pmem_allocator_->offset2addr<DataEntry>(
-        pending_free_space.front().space_entry.offset);
-    kvdk_assert(entry != nullptr, "Try to free a invalid pmem address");
-    entry->Destroy();
-    pmem_allocator_->Free(pending_free_space.front());
+    purgeAndFree(pending_free_space.front());
     pending_free_space.pop_front();
   }
 }

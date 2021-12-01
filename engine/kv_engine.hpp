@@ -109,8 +109,18 @@ private:
     bool delay_free{false};
   };
 
-  struct ThreadLocalRes {
-    ThreadLocalRes() = default;
+  struct ThreadCache {
+    struct HashRef {
+      HashEntry *hash_entry_ref;
+      SpinMutex *hash_lock_ref;
+    };
+
+    struct PendingFreeSpace {
+      SizedSpaceEntry space_entry;
+      HashRef hash_ref;
+    };
+
+    ThreadCache() = default;
 
     uint64_t newest_restored_ts = 0;
     std::unordered_map<uint64_t, int> visited_skiplist_ids;
@@ -120,6 +130,7 @@ private:
     SnapshotImpl last_snapshot{kMaxTimestamp};
 
     std::deque<SizedSpaceEntry> pending_free_space{};
+    std::deque<PendingFreeSpace> pending_free_space_new{};
   };
 
   bool CheckKeySize(const StringView &key) { return key.size() <= UINT16_MAX; }
@@ -292,7 +303,15 @@ private:
                         record_pmmptr->entry.meta.timestamp));
   }
 
-  std::vector<ThreadLocalRes> thread_res_;
+  inline void purgeAndFree(const SizedSpaceEntry &space_entry) {
+    DataEntry *entry =
+        pmem_allocator_->offset2addr<DataEntry>(space_entry.space_entry.offset);
+    kvdk_assert(entry != nullptr, "Try to free a invalid pmem address");
+    entry->Destroy();
+    pmem_allocator_->Free(space_entry);
+  }
+
+  std::vector<ThreadCache> thread_cache_;
 
   // restored kvs in reopen
   std::atomic<uint64_t> restored_{0};
