@@ -769,7 +769,10 @@ Status KVEngine::HashGetImpl(const StringView &key, std::string *value,
     }
 
     void *pmem_record = nullptr;
-    if (hash_entry.header.data_type & (StringDataRecord | DlistDataRecord)) {
+    if (hash_entry.header.data_type & DeleteRecordType) {
+      return Status::NotFound;
+    } else if (hash_entry.header.data_type &
+               (StringDataRecord | DlistDataRecord)) {
       pmem_record = hash_entry.index.ptr;
     } else if (hash_entry.header.data_type == SortedDataRecord) {
       if (hash_entry.header.offset_type == HashOffsetType::SkiplistNode) {
@@ -850,6 +853,10 @@ Status KVEngine::SDeleteImpl(Skiplist *skiplist, const StringView &user_key) {
       return s;
     }
 
+    TimeStampType new_ts = get_timestamp();
+    SnapshotSetter setter(thread_cache_[write_thread.id].holding_snapshot,
+                          new_ts);
+
     if (hash_entry.header.offset_type == HashOffsetType::SkiplistNode) {
       dram_node = hash_entry.index.skiplist_node;
       existing_record = dram_node->record;
@@ -858,12 +865,29 @@ Status KVEngine::SDeleteImpl(Skiplist *skiplist, const StringView &user_key) {
       existing_record = hash_entry.index.dl_record;
     }
 
-    if (!skiplist->Delete(user_key, existing_record, dram_node, hint.spin)) {
+    auto request_size = collection_key.size() + sizeof(DLRecord);
+    SizedSpaceEntry sized_space_entry = pmem_allocator_->Allocate(request_size);
+    if (sized_space_entry.size == 0) {
+      return Status::PmemOverflow;
+    }
+    void *delete_record_pmem_ptr =
+        pmem_allocator_->offset2addr(sized_space_entry.space_entry.offset);
+
+    if (!skiplist->Delete(user_key, existing_record, sized_space_entry, new_ts,
+                          dram_node, hint.spin)) {
       continue;
     }
 
-    entry_ptr->Clear();
-    purgeAndFree(existing_record);
+    hash_table_->Insert(hint, entry_ptr, SortedDeleteRecord,
+                        dram_node == nullptr ? delete_record_pmem_ptr
+                                             : dram_node,
+                        dram_node == nullptr ? HashOffsetType::DLRecord
+                                             : HashOffsetType::SkiplistNode);
+
+    delayFree(PendingFreeDataRecord{existing_record, new_ts});
+    delayFree(PendingFreeDeleteRecord{pmem_allocator_->offset2addr_checked(
+                                          sized_space_entry.space_entry.offset),
+                                      new_ts, entry_ptr, hint.spin});
     break;
   }
   return Status::Ok;
@@ -892,6 +916,9 @@ Status KVEngine::SSetImpl(Skiplist *skiplist, const StringView &user_key,
     DataEntry data_entry;
     auto hint = hash_table_->GetHint(collection_key);
     std::lock_guard<SpinMutex> lg(*hint.spin);
+    TimeStampType new_ts = get_timestamp();
+    SnapshotSetter setter(thread_cache_[write_thread.id].holding_snapshot,
+                          new_ts);
     Status s =
         hash_table_->SearchForWrite(hint, collection_key, SortedDataRecord,
                                     &entry_ptr, &hash_entry, &data_entry);
@@ -900,7 +927,6 @@ Status KVEngine::SSetImpl(Skiplist *skiplist, const StringView &user_key,
     }
     bool found = s == Status::Ok;
 
-    uint64_t new_ts = get_timestamp();
     assert(!found || new_ts > data_entry.meta.timestamp);
 
     if (found) {
@@ -922,8 +948,11 @@ Status KVEngine::SSetImpl(Skiplist *skiplist, const StringView &user_key,
       if (dram_node == nullptr) {
         hash_table_->Insert(hint, entry_ptr, SortedDataRecord,
                             new_record_pmem_ptr, HashOffsetType::DLRecord);
+      } else if (entry_ptr->header.data_type == SortedDeleteRecord) {
+        hash_table_->Insert(hint, entry_ptr, SortedDataRecord, dram_node,
+                            HashOffsetType::SkiplistNode);
       }
-      purgeAndFree(existing_record);
+      delayFree(PendingFreeDataRecord{existing_record, new_ts});
     } else {
       if (!skiplist->Insert(user_key, value, sized_space_entry, new_ts,
                             &dram_node, hint.spin)) {
@@ -937,7 +966,7 @@ Status KVEngine::SSetImpl(Skiplist *skiplist, const StringView &user_key,
                           dram_node ? HashOffsetType::SkiplistNode
                                     : HashOffsetType::DLRecord);
       if (entry_base_status == HashEntryStatus::Updating) {
-        purgeAndFree(hash_entry.index.dl_record);
+        delayFree(PendingFreeDataRecord{hash_entry.index.dl_record, new_ts});
       }
     }
 
@@ -1218,7 +1247,7 @@ Status KVEngine::SGet(const StringView collection, const StringView user_key,
   }
   assert(skiplist);
   std::string skiplist_key(skiplist->InternalKey(user_key));
-  return HashGetImpl(skiplist_key, value, SortedDataRecord);
+  return HashGetImpl(skiplist_key, value, SortedRecordType);
 }
 
 Status KVEngine::StringDeleteImpl(const StringView &key) {
@@ -1934,6 +1963,10 @@ SizedSpaceEntry KVEngine::handlePendingFreeRecord(
                            data_entry->header.record_size,
                            data_entry->meta.timestamp);
   }
+  case SortedDeleteRecord:
+    return SizedSpaceEntry(pmem_allocator_->addr2offset(data_entry),
+                           data_entry->header.record_size,
+                           data_entry->meta.timestamp);
   default: {
     std::abort();
   }
@@ -1945,7 +1978,8 @@ SizedSpaceEntry KVEngine::handlePendingFreeRecord(
   DataEntry *data_entry =
       static_cast<DataEntry *>(pending_free_data_record.pmem_data_record);
   switch (data_entry->meta.type) {
-  case StringDataRecord: {
+  case StringDataRecord:
+  case SortedDataRecord: {
     data_entry->Destroy();
     return SizedSpaceEntry(pmem_allocator_->addr2offset(data_entry),
                            data_entry->header.record_size,
@@ -2032,9 +2066,9 @@ void KVEngine::backgroundPendingFreeSpaceHandler() {
         }
       }
     }
-    GlobalLogger.Info("batch free %lu, unfree data %lu, unfree delete %lu\n",
-                      space_to_free.size(), unfreed_data_record.size(),
-                      unfreed_delete_record.size());
+    // GlobalLogger.Info("batch free %lu, unfree data %lu, unfree delete %lu\n",
+    // space_to_free.size(), unfreed_data_record.size(),
+    // unfreed_delete_record.size());
     pmem_allocator_->BatchFree(space_to_free);
 
     pending_free_data_records_pool_.clear();

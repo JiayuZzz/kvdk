@@ -219,6 +219,7 @@ public:
     assert(record != nullptr);
     switch (record->entry.meta.type) {
     case RecordType::SortedDataRecord:
+    case RecordType::SortedDeleteRecord:
       return ExtractID(record->Key());
       break;
     case RecordType::SortedHeaderRecord:
@@ -275,6 +276,7 @@ public:
   //
   // Return true on success, return false on fail.
   bool Delete(const StringView &key, DLRecord *deleted_record,
+              const SizedSpaceEntry &space_to_write, TimeStampType timestamp,
               SkiplistNode *dram_node, const SpinMutex *deleting_key_lock);
 
   void ObsoleteNodes(const std::vector<SkiplistNode *> nodes) {
@@ -300,8 +302,8 @@ public:
   Status CheckConnection(int height);
 
 private:
-  // Insert DLRecord "inserting" between "prev" and "next"
-  void InsertDLRecord(DLRecord *prev, DLRecord *next, DLRecord *inserting);
+  // Link DLRecord "link" between "prev" and "next"
+  void LinkDLRecord(DLRecord *prev, DLRecord *next, DLRecord *link);
 
   // Find and lock skiplist position to insert "key"
   //
