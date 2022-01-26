@@ -157,7 +157,7 @@ Status Skiplist::CheckConnection(int height) {
                                           &entry_ptr, &hash_entry, &data_entry);
     assert(s == Status::Ok && "search node fail!");
 
-    if (hash_entry.header.offset_type == HashOffsetType::SkiplistNode) {
+    if (hash_entry.header.index_type == HashIndexType::SkiplistNode) {
       SkiplistNode *dram_node = hash_entry.index.skiplist_node;
       if (next_node == nullptr) {
         if (dram_node->Height() >= height) {
@@ -648,14 +648,14 @@ Status SortedCollectionRebuilder::repairSkiplistLinkage(Skiplist *skiplist) {
     }
 
     assert(valid_version_record != nullptr);
-    kvdk_assert(hash_entry.header.offset_type == HashOffsetType::DLRecord,
+    kvdk_assert(hash_entry.header.index_type == HashIndexType::DLRecord,
                 "wrong hash offset type in repair skiplist linkage");
     entry_ptr->header.data_type = valid_version_record->entry.meta.type;
     SkiplistNode *dram_node = Skiplist::NewNodeBuild(valid_version_record);
 
     if (dram_node != nullptr) {
       entry_ptr->index.skiplist_node = dram_node;
-      entry_ptr->header.offset_type = HashOffsetType::SkiplistNode;
+      entry_ptr->header.index_type = HashIndexType::SkiplistNode;
       auto height = dram_node->Height();
       for (uint8_t i = 1; i <= height; i++) {
         splice.prevs[i]->RelaxedSetNext(i, dram_node);
@@ -733,10 +733,10 @@ void SortedCollectionRebuilder::linkedNode(uint64_t thread_id, int height) {
           next_offset = next_record->next;
           next_record = pmem_allocator_->offset2addr<DLRecord>(next_offset);
 
-          if (hash_entry.header.offset_type == HashOffsetType::Skiplist) {
+          if (hash_entry.header.index_type == HashIndexType::Skiplist) {
             next_node = hash_entry.index.skiplist->header();
-          } else if (hash_entry.header.offset_type ==
-                     HashOffsetType::SkiplistNode) {
+          } else if (hash_entry.header.index_type ==
+                     HashIndexType::SkiplistNode) {
             next_node = hash_entry.index.skiplist_node;
           } else {
             continue;
@@ -805,7 +805,7 @@ Status SortedCollectionRebuilder::dealWithFirstHeight(uint64_t thread_id,
             "insert first before repair linkage");
         return Status::Abort;
       }
-      assert(entry_ptr->header.offset_type == HashOffsetType::DLRecord);
+      assert(entry_ptr->header.index_type == HashIndexType::DLRecord);
       // TODO continue
       DLRecord *valid_version_record =
           findValidVersion(next_record, &invalid_records);
@@ -837,13 +837,13 @@ Status SortedCollectionRebuilder::dealWithFirstHeight(uint64_t thread_id,
       }
 
       assert(valid_version_record != nullptr);
-      kvdk_assert(hash_entry.header.offset_type == HashOffsetType::DLRecord,
+      kvdk_assert(hash_entry.header.index_type == HashIndexType::DLRecord,
                   "wrong hash offset type in repair skiplist linkage");
       entry_ptr->header.data_type = valid_version_record->entry.meta.type;
       SkiplistNode *dram_node = Skiplist::NewNodeBuild(valid_version_record);
       if (dram_node != nullptr) {
         entry_ptr->index.skiplist_node = dram_node;
-        entry_ptr->header.offset_type = HashOffsetType::SkiplistNode;
+        entry_ptr->header.index_type = HashIndexType::SkiplistNode;
         cur_node->RelaxedSetNext(1, dram_node);
         dram_node->RelaxedSetNext(1, nullptr);
         cur_node = dram_node;
@@ -929,12 +929,12 @@ Status SortedCollectionRebuilder::updateEntriesOffset() {
       return Status::Abort;
     }
 
-    if (hash_entry.header.offset_type == HashOffsetType::Skiplist) {
+    if (hash_entry.header.index_type == HashIndexType::Skiplist) {
       node = hash_entry.index.skiplist->header();
       it->second.node = node;
       it++;
     } else {
-      kvdk_assert(hash_entry.header.offset_type == HashOffsetType::DLRecord,
+      kvdk_assert(hash_entry.header.index_type == HashIndexType::DLRecord,
                   "wrong hash offset type in repair skiplist linkage");
       it = record_offsets_.erase(it);
       cur_record = hash_entry.index.dl_record;
@@ -975,7 +975,7 @@ Status SortedCollectionRebuilder::updateEntriesOffset() {
 
       if (node != nullptr) {
         entry_ptr->index.skiplist_node = node;
-        entry_ptr->header.offset_type = HashOffsetType::SkiplistNode;
+        entry_ptr->header.index_type = HashIndexType::SkiplistNode;
         new_kvs.insert({pmem_allocator_->addr2offset(valid_version_record),
                         {false, node}});
       } else {
