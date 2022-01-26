@@ -806,7 +806,6 @@ Status SortedCollectionRebuilder::dealWithFirstHeight(uint64_t thread_id,
         return Status::Abort;
       }
       assert(entry_ptr->header.index_type == HashIndexType::DLRecord);
-      // TODO continue
       DLRecord *valid_version_record =
           findValidVersion(next_record, &invalid_records);
       if (valid_version_record == nullptr) {
