@@ -246,11 +246,10 @@ class KVEngine : public Engine {
                   "Invalid type!");
     return std::is_same<CollectionType, Skiplist>::value
                ? RecordType::SortedHeader
-               : std::is_same<CollectionType, List>::value
-                     ? RecordType::ListRecord
-                     : std::is_same<CollectionType, HashList>::value
-                           ? RecordType::HashRecord
-                           : RecordType::Empty;
+           : std::is_same<CollectionType, List>::value ? RecordType::ListRecord
+           : std::is_same<CollectionType, HashList>::value
+               ? RecordType::HashRecord
+               : RecordType::Empty;
   }
 
   static PointerType pointerType(RecordType rtype) {
@@ -542,12 +541,18 @@ class KVEngine : public Engine {
     }
   }
 
-  inline void purgeAndFree(void* pmem_record) {
-    DataEntry* data_entry = static_cast<DataEntry*>(pmem_record);
-    data_entry->Destroy();
-    pmem_allocator_->Free(
-        SpaceEntry(pmem_allocator_->addr2offset_checked(pmem_record),
-                   data_entry->header.record_size));
+  inline void purgeAndFree(StringRecord* string_record) {
+    uint32_t record_size = string_record->entry.header.record_size;
+    string_record->Destroy();
+    pmem_allocator_->Free(SpaceEntry(
+        pmem_allocator_->addr2offset_checked(string_record), record_size));
+  }
+
+  inline void purgeAndFree(DLRecord* dl_record) {
+    uint32_t record_size = dl_record->entry.header.record_size;
+    dl_record->Destroy();
+    pmem_allocator_->Free(SpaceEntry(
+        pmem_allocator_->addr2offset_checked(dl_record), record_size));
   }
 
   // Run in background to clean old records regularly

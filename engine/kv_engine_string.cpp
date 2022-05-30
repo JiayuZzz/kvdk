@@ -292,7 +292,7 @@ Status KVEngine::restoreStringRecord(StringRecord* pmem_record,
 
   insertKeyOrElem(lookup_result, cached_entry.meta.type, pmem_record);
   if (lookup_result.s == Status::Ok) {
-    purgeAndFree(lookup_result.entry.GetIndex().ptr);
+    purgeAndFree(lookup_result.entry.GetIndex().string_record);
   }
 
   return Status::Ok;
