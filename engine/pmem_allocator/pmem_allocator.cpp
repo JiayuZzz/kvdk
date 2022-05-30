@@ -12,7 +12,6 @@
 #include "../thread_manager.hpp"
 
 namespace KVDK_NAMESPACE {
-
 PMEMAllocator::PMEMAllocator(char* pmem, uint64_t pmem_size,
                              uint64_t num_segment_blocks, uint32_t block_size,
                              uint32_t max_access_threads,
@@ -298,7 +297,11 @@ SpaceEntry PMEMAllocator::Allocate(uint64_t size) {
 }
 
 void PMEMAllocator::padingSpaceEntry(PMemOffsetType offset, uint32_t size) {
+  static uint32_t pading_size =
+      std::max(sizeof(DLRecord), sizeof(StringRecord));
+  kvdk_assert(pading_size <= size,
+              "pmem allocator space entry size should larger than pading size");
   PadingRecord::PersistPadingRecord(offset2addr_checked(offset), size,
-                                    block_size_);
+                                    pading_size);
 }
 }  // namespace KVDK_NAMESPACE
