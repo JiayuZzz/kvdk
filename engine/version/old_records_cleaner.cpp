@@ -280,16 +280,20 @@ SpaceEntry OldRecordsCleaner::purgeOldDataRecord(
   DataEntry* data_entry =
       static_cast<DataEntry*>(old_data_record.pmem_data_record);
   switch (data_entry->meta.type) {
+    case StringDataRecord: {
+      static_cast<StringRecord*>(old_data_record.pmem_data_record)->Destroy();
+      break;
+    }
     case SortedHeader:
-    case StringDataRecord:
     case SortedElem: {
-      data_entry->Destroy();
-      return SpaceEntry(kv_engine_->pmem_allocator_->addr2offset(data_entry),
-                        data_entry->header.record_size);
+      static_cast<StringRecord*>(old_data_record.pmem_data_record)->Destroy();
+      break;
     }
     default:
       std::abort();
   }
+  return SpaceEntry(kv_engine_->pmem_allocator_->addr2offset(data_entry),
+                    data_entry->header.record_size);
 }
 
 SpaceEntry OldRecordsCleaner::purgeOldDeleteRecord(

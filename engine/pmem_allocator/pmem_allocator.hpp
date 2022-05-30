@@ -21,7 +21,6 @@
 namespace KVDK_NAMESPACE {
 
 constexpr PMemOffsetType kNullPMemOffset = UINT64_MAX;
-constexpr uint64_t kMinPaddingBlocks = 8;
 
 // Manage allocation/de-allocation of PMem space at block unit
 //
@@ -166,7 +165,7 @@ class PMEMAllocator : public Allocator {
   }
 
   // Mark and persist a space entry on PMem
-  void persistSpaceEntry(PMemOffsetType offset, uint64_t size);
+  void padingSpaceEntry(PMemOffsetType offset, uint32_t size);
 
   char* pmem_;
   std::vector<PAllocThreadCache, AlignedAllocator<PAllocThreadCache>>

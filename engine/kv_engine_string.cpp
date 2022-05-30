@@ -337,8 +337,7 @@ Status KVEngine::stringWritePublish(StringWriteArgs const& args) {
 
 Status KVEngine::stringRollback(TimeStampType,
                                 BatchWriteLog::StringLogEntry const& log) {
-  static_cast<DataEntry*>(pmem_allocator_->offset2addr_checked(log.offset))
-      ->Destroy();
+  pmem_allocator_->offset2addr_checked<StringRecord>(log.offset)->Destroy();
   return Status::Ok;
 }
 

@@ -100,6 +100,49 @@ struct DataEntry {
 };
 static_assert(sizeof(DataEntry) <= kMinPMemBlockSize);
 
+// A empty record that only used to zeroing data record and mark record size;
+struct PadingRecord {
+ public:
+  DataEntry entry;
+  char data[0];
+
+  // Construct and persist a pading record at pmem address "addr", mark record
+  // size, and fill 0
+  //
+  // addr: address at pmem to persist the record, its size should be record size
+  // record_size: size of this record
+  // pading_size: size to filling 0, as we mark record size on pmem, the actual
+  // filling size would be (pading_size - sizeof(record_size))
+  static PadingRecord* PersistPadingRecord(void* addr, uint32_t record_size,
+                                           uint32_t pading_size) {
+    PadingRecord* record =
+        constructPadingRecord(addr, record_size, pading_size);
+    pmem_persist(addr, pading_size);
+    return record;
+  }
+
+ private:
+  PadingRecord(uint32_t record_size, uint32_t pading_size)
+      : entry(0, record_size, 0, RecordType::Padding, 0, 0) {
+    kvdk_assert(pading_size <= record_size,
+                "pading size should smaller than record size");
+    memset(data, 0, pading_size - sizeof(DataEntry));
+  }
+
+  // Construct a PadingRecord instance at target_address. As the record need
+  // additional space to store data, we need pre-allocate enough space for it.
+  //
+  // target_address: pre-allocated space to store constructed record, its size
+  // should be "record_size"
+  static PadingRecord* constructPadingRecord(void* target_address,
+                                             uint32_t record_size,
+                                             uint32_t pading_size) {
+    PadingRecord* record =
+        new (target_address) PadingRecord(record_size, pading_size);
+    return record;
+  }
+};
+
 struct StringRecord {
  public:
   DataEntry entry;
@@ -129,7 +172,10 @@ struct StringRecord {
       RecordType type, PMemOffsetType old_version, const StringView& key,
       const StringView& value, ExpireTimeType expired_time = kPersistTime);
 
-  void Destroy() { entry.Destroy(); }
+  void Destroy() {
+    PadingRecord::PersistPadingRecord(this, entry.header.record_size,
+                                      sizeof(StringRecord));
+  }
 
   // make sure there is data followed in data[0]
   StringView Key() const { return StringView(data, entry.meta.k_size); }
@@ -239,7 +285,10 @@ struct DLRecord {
     return record;
   }
 
-  void Destroy() { entry.Destroy(); }
+  void Destroy() {
+    PadingRecord::PersistPadingRecord(this, entry.header.record_size,
+                                      sizeof(DLRecord));
+  }
 
   bool Validate() {
     if (ValidateRecordSize()) {

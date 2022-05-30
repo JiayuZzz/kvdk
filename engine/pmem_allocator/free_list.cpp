@@ -141,7 +141,7 @@ void Freelist::MergeSpaceInPool() {
         if (merged_blocks > 0) {
           // Persist merged free entry on PMem
           if (merged_blocks > b_size) {
-            pmem_allocator_->persistSpaceEntry(offset,
+            pmem_allocator_->padingSpaceEntry(offset,
                                                merged_blocks * block_size_);
           }
 

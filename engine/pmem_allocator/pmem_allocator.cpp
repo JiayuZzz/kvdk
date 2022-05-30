@@ -177,7 +177,7 @@ bool PMEMAllocator::allocateSegmentSpace(SpaceEntry* segment_entry) {
   if (offset_head_ <= pmem_size_ - segment_size_) {
     *segment_entry = SpaceEntry{offset_head_, segment_size_};
     offset_head_ += segment_size_;
-    persistSpaceEntry(segment_entry->offset, segment_size_);
+    padingSpaceEntry(segment_entry->offset, segment_size_);
     return true;
   }
   return false;
@@ -247,8 +247,8 @@ SpaceEntry PMEMAllocator::Allocate(uint64_t size) {
         assert(extra_space % block_size_ == 0);
         // Mark splited space entry size on PMem, we should firstly mark the
         // 2st part for correctness in recovery
-        persistSpaceEntry(palloc_thread_cache.free_entry.offset + aligned_size,
-                          extra_space);
+        padingSpaceEntry(palloc_thread_cache.free_entry.offset + aligned_size,
+                         extra_space);
       }
 
       space_entry = palloc_thread_cache.free_entry;
@@ -256,7 +256,7 @@ SpaceEntry PMEMAllocator::Allocate(uint64_t size) {
       if (offset2addr_checked<DataEntry>(space_entry.offset)
               ->header.record_size != space_entry.size) {
         // TODO (jiayu): Avoid persist metadata on PMem in allocation
-        persistSpaceEntry(space_entry.offset, space_entry.size);
+        padingSpaceEntry(space_entry.offset, space_entry.size);
       }
       palloc_thread_cache.free_entry.size -= aligned_size;
       palloc_thread_cache.free_entry.offset += aligned_size;
@@ -290,17 +290,15 @@ SpaceEntry PMEMAllocator::Allocate(uint64_t size) {
 
   // Persist size of space entry on PMem
   // TODO (jiayu): Avoid persist metadata on PMem in allocation
-  persistSpaceEntry(space_entry.offset, space_entry.size);
+  padingSpaceEntry(space_entry.offset, space_entry.size);
   palloc_thread_cache.segment_entry.offset += space_entry.size;
   palloc_thread_cache.segment_entry.size -= space_entry.size;
   LogAllocation(access_thread.id, space_entry.size);
   return space_entry;
 }
 
-void PMEMAllocator::persistSpaceEntry(PMemOffsetType offset, uint64_t size) {
-  std::uint32_t sz = static_cast<std::uint32_t>(size);
-  kvdk_assert(size == static_cast<std::uint64_t>(sz), "Integer Overflow!");
-  DataEntry padding{0, sz, TimeStampType{}, RecordType::Padding, 0, 0};
-  pmem_memcpy_persist(offset2addr_checked(offset), &padding, sizeof(DataEntry));
+void PMEMAllocator::padingSpaceEntry(PMemOffsetType offset, uint32_t size) {
+  PadingRecord::PersistPadingRecord(offset2addr_checked(offset), size,
+                                    block_size_);
 }
 }  // namespace KVDK_NAMESPACE
