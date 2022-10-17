@@ -268,16 +268,6 @@ Status KVEngine::sortedPutImpl(Skiplist* skiplist, const StringView& user_key,
   return ret.s;
 }
 
-#ifdef KVDK_WITH_PMEM
-Status KVEngine::restoreSortedHeader(DLRecord* header) {
-  return sorted_rebuilder_->AddHeader(header);
-}
-
-Status KVEngine::restoreSortedElem(DLRecord* elem) {
-  return sorted_rebuilder_->AddElement(elem);
-}
-#endif
-
 Status KVEngine::sortedWritePrepare(SortedWriteArgs& args, TimestampType ts) {
   return args.skiplist->PrepareWrite(args, ts);
 }
@@ -290,10 +280,4 @@ Status KVEngine::sortedWrite(SortedWriteArgs& args) {
 Status KVEngine::sortedWritePublish(SortedWriteArgs const&) {
   return Status::Ok;
 }
-
-#ifdef KVDK_WITH_PMEM
-Status KVEngine::sortedRollback(BatchWriteLog::SortedLogEntry const& log) {
-  return sorted_rebuilder_->Rollback(log);
-}
-#endif
 }  // namespace KVDK_NAMESPACE

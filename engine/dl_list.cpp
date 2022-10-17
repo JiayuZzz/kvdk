@@ -147,9 +147,7 @@ bool DLList::Replace(DLRecord* old_record, DLRecord* new_record,
       old_record->PersistPrevNT(new_record_offset);
     } else {
       new_record->prev = prev_offset;
-      pmem_persist(&new_record->prev, sizeof(MemoryOffsetType));
       new_record->next = next_offset;
-      pmem_persist(&new_record->next, sizeof(MemoryOffsetType));
       linkRecord(prev, next, new_record, kv_allocator);
     }
   }
@@ -172,10 +170,8 @@ bool DLList::Remove(DLRecord* removing_record, Allocator* kv_allocator,
     // first unlink deleting entry from next's prev.(It is the reverse process
     // of insertion)
     next->prev = prev_offset;
-    pmem_persist(&next->prev, 8);
     TEST_SYNC_POINT("KVEngine::DLList::Remove::PersistNext'sPrev::After");
     prev->next = next_offset;
-    pmem_persist(&prev->next, 8);
   }
   return on_list;
 }

@@ -5,9 +5,6 @@
 #include "kv_engine.hpp"
 
 #include <dirent.h>
-#ifdef KVDK_WITH_PMEM
-#include <libpmem.h>
-#endif
 #include <sys/mman.h>
 
 #include <algorithm>
@@ -20,12 +17,10 @@
 #include <thread>
 
 #include "backup_log.hpp"
-#include "configs.hpp"
 #include "dram_allocator.hpp"
 #include "hash_collection/iterator.hpp"
 #include "kvdk/engine.hpp"
 #include "list_collection/iterator.hpp"
-#include "pmem_allocator/pmem_allocator.hpp"
 #include "sorted_collection/iterator.hpp"
 #include "structures.hpp"
 #include "utils/sync_point.hpp"
@@ -34,7 +29,6 @@
 namespace KVDK_NAMESPACE {
 
 // Set class name of memory allocator for volatile key values.
-// Persitent key values will be allocated by PMEMAllocator if enabled.
 #ifndef KVDK_VOLATILE_KV_MEMORY_ALLOCATOR_CLASS
 #define KVDK_VOLATILE_KV_MEMORY_ALLOCATOR_CLASS SystemMemoryAllocator
 #endif
@@ -55,415 +49,6 @@ namespace KVDK_NAMESPACE {
 #define KVDK_HASH_TABLE_NEW_BUCKET_MEMORY_ALLOCATOR_CLASS SystemMemoryAllocator
 #endif
 
-#ifdef KVDK_WITH_PMEM
-// fsdax mode align to 2MB by default.
-constexpr uint64_t kPMEMMapSizeUnit = (1 << 21);
-
-void PendingBatch::PersistFinish() {
-  num_kv = 0;
-  stage = Stage::Finish;
-  pmem_persist(this, sizeof(PendingBatch));
-}
-
-void PendingBatch::PersistProcessing(
-    const std::vector<MemoryOffsetType>& records, TimestampType ts) {
-  pmem_memcpy_persist(record_offsets, records.data(), records.size() * 8);
-  timestamp = ts;
-  num_kv = records.size();
-  stage = Stage::Processing;
-  pmem_persist(this, sizeof(PendingBatch));
-}
-
-Status KVEngine::persistOrRecoverImmutableConfigs() {
-  size_t mapped_len;
-  int is_pmem;
-  uint64_t len =
-      kPMEMMapSizeUnit *
-      (size_t)ceil(1.0 * sizeof(ImmutableConfigs) / kPMEMMapSizeUnit);
-  ImmutableConfigs* configs = (ImmutableConfigs*)pmem_map_file(
-      config_file().c_str(), len, PMEM_FILE_CREATE, 0666, &mapped_len,
-      &is_pmem);
-  if (configs == nullptr || !is_pmem || mapped_len != len) {
-    GlobalLogger.Error(
-        "Open immutable configs file error %s\n",
-        !is_pmem ? (dir_ + "is not a valid pmem path").c_str() : "");
-    return Status::IOError;
-  }
-  if (configs->Valid()) {
-    configs->AssignImmutableConfigs(configs_);
-  }
-
-  Status s = checkPMemConfigs(configs_);
-  if (s == Status::Ok) {
-    configs->PersistImmutableConfigs(configs_);
-  }
-  pmem_unmap(configs, len);
-  return s;
-}
-
-Status KVEngine::initOrRestoreCheckpoint() {
-  size_t mapped_len;
-  int is_pmem;
-  persist_checkpoint_ = static_cast<CheckPoint*>(
-      pmem_map_file(checkpoint_file().c_str(), sizeof(CheckPoint),
-                    PMEM_FILE_CREATE, 0666, &mapped_len, &is_pmem));
-  if (persist_checkpoint_ == nullptr || !is_pmem ||
-      mapped_len != sizeof(CheckPoint)) {
-    GlobalLogger.Error("Map persistent checkpoint file %s failed\n",
-                       checkpoint_file().c_str());
-    return Status::IOError;
-  }
-  return Status::Ok;
-}
-
-Status KVEngine::restoreExistingData() {
-  sorted_rebuilder_.reset(new SortedCollectionRebuilder(
-      this, configs_.opt_large_sorted_collection_recovery,
-      configs_.max_access_threads, *persist_checkpoint_));
-  hash_rebuilder_.reset(new HashListRebuilder(
-      kv_allocator_.get(), hash_table_.get(), dllist_locks_.get(),
-      configs_.max_access_threads, *persist_checkpoint_));
-  list_rebuilder_.reset(new ListRebuilder(
-      kv_allocator_.get(), hash_table_.get(), dllist_locks_.get(),
-      configs_.max_access_threads, *persist_checkpoint_));
-
-  Status s = batchWriteRollbackLogs();
-  if (s != Status::Ok) {
-    return s;
-  }
-
-  std::vector<std::future<Status>> fs;
-  GlobalLogger.Info("Start restore data\n");
-  for (uint32_t i = 0; i < configs_.max_access_threads; i++) {
-    fs.push_back(std::async(&KVEngine::restoreData, this));
-  }
-
-  for (auto& f : fs) {
-    s = f.get();
-    if (s != Status::Ok) {
-      return s;
-    }
-  }
-  fs.clear();
-
-  GlobalLogger.Info("RestoreData done: iterated %lu records\n",
-                    restored_.load());
-
-  // restore skiplist by two optimization strategy
-  auto s_ret = sorted_rebuilder_->Rebuild();
-  if (s_ret.s != Status::Ok) {
-    return s_ret.s;
-  }
-  if (collection_id_.load() <= s_ret.max_id) {
-    collection_id_.store(s_ret.max_id + 1);
-  }
-  skiplists_.swap(s_ret.rebuild_skiplits);
-
-  GlobalLogger.Info("Rebuild skiplist done\n");
-  sorted_rebuilder_.reset(nullptr);
-
-  auto l_ret = list_rebuilder_->Rebuild();
-  if (l_ret.s != Status::Ok) {
-    return l_ret.s;
-  }
-  if (collection_id_.load() <= l_ret.max_id) {
-    collection_id_.store(l_ret.max_id + 1);
-  }
-  lists_.swap(l_ret.rebuilt_lists);
-  GlobalLogger.Info("Rebuild Lists done\n");
-  list_rebuilder_.reset(nullptr);
-
-  auto h_ret = hash_rebuilder_->Rebuild();
-  if (h_ret.s != Status::Ok) {
-    return h_ret.s;
-  }
-  if (collection_id_.load() <= h_ret.max_id) {
-    collection_id_.store(h_ret.max_id + 1);
-  }
-  hlists_.swap(h_ret.rebuilt_hlists);
-  GlobalLogger.Info("Rebuild HashLists done\n");
-  hash_rebuilder_.reset(nullptr);
-
-#if KVDK_DEBUG_LEVEL > 0
-  for (auto skiplist : skiplists_) {
-    Status s = skiplist.second->CheckIndex();
-    if (s != Status::Ok) {
-      GlobalLogger.Error("Check skiplist index error\n");
-      return s;
-    }
-  }
-
-  for (auto hlist : hlists_) {
-    Status s = hlist.second->CheckIndex();
-    if (s != Status::Ok) {
-      GlobalLogger.Error("Check hash index error\n");
-      return s;
-    }
-  }
-#endif
-
-  uint64_t latest_version_ts = 0;
-  if (restored_.load() > 0) {
-    for (size_t i = 0; i < engine_thread_cache_.size(); i++) {
-      auto& engine_thread_cache = engine_thread_cache_[i];
-      latest_version_ts =
-          std::max(engine_thread_cache.newest_restored_ts, latest_version_ts);
-    }
-  }
-
-  persist_checkpoint_->Release();
-  pmem_persist(persist_checkpoint_, sizeof(CheckPoint));
-
-  version_controller_.Init(latest_version_ts);
-  old_records_cleaner_.TryGlobalClean();
-  kvdk_assert(kv_allocator_->BytesAllocated() >= 0, "Invalid PMem Usage");
-  return Status::Ok;
-}
-
-Status KVEngine::restoreData() {
-  this_thread.id = next_recovery_tid_.fetch_add(1);
-  auto& engine_thread_cache = engine_thread_cache_[ThreadManager::ThreadID() %
-                                                   configs_.max_access_threads];
-
-  SpaceEntry segment_recovering;
-  DataEntry data_entry_cached;
-  uint64_t cnt = 0;
-  Status s;
-  while (true) {
-    if (segment_recovering.size == 0) {
-      if (!dynamic_cast<PMEMAllocator*>(kv_allocator_.get())
-               ->FetchSegment(&segment_recovering)) {
-        break;
-      }
-      assert(segment_recovering.size % configs_.pmem_block_size == 0);
-    }
-
-    void* recovering_data_record =
-        kv_allocator_->offset2addr_checked(segment_recovering.offset);
-    memcpy(&data_entry_cached, recovering_data_record, sizeof(DataEntry));
-
-    if (data_entry_cached.header.record_size == 0) {
-      // Reach end of the segment, mark it as padding
-      DataEntry* recovering_pmem_data_entry =
-          static_cast<DataEntry*>(recovering_data_record);
-      uint64_t padding_size = segment_recovering.size;
-      recovering_pmem_data_entry->meta.type = RecordType::Empty;
-      pmem_persist(&recovering_pmem_data_entry->meta.type, sizeof(RecordType));
-      recovering_pmem_data_entry->header.record_size = padding_size;
-      pmem_persist(&recovering_pmem_data_entry->header.record_size,
-                   sizeof(uint32_t));
-      data_entry_cached = *recovering_pmem_data_entry;
-    }
-
-    segment_recovering.size -= data_entry_cached.header.record_size;
-    segment_recovering.offset += data_entry_cached.header.record_size;
-
-    switch (data_entry_cached.meta.type) {
-      case RecordType::SortedElem:
-      case RecordType::SortedHeader:
-      case RecordType::String:
-      case RecordType::HashHeader:
-      case RecordType::HashElem:
-      case RecordType::ListHeader:
-      case RecordType::ListElem: {
-        if (data_entry_cached.meta.status == RecordStatus::Dirty) {
-          data_entry_cached.meta.type = RecordType::Empty;
-        } else {
-          if (!validateRecord(recovering_data_record)) {
-            // Checksum dismatch, mark as padding to be Freed
-            // Otherwise the Restore will continue normally
-            data_entry_cached.meta.type = RecordType::Empty;
-          }
-        }
-        break;
-      }
-      case RecordType::Empty: {
-        break;
-      }
-      default: {
-        // Report Corrupted Record, but still release it and continues
-        GlobalLogger.Error(
-            "Corrupted Record met when recovering. It has invalid "
-            "type. Record data type: %u, Checksum: %u\n",
-            data_entry_cached.meta.type, data_entry_cached.header.checksum);
-        kvdk_assert(data_entry_cached.header.checksum == 0, "");
-        data_entry_cached.meta.type = RecordType::Empty;
-        break;
-      }
-    }
-
-    // When met records with invalid checksum
-    // or the space is padding, empty or with corrupted record
-    // Free the space and fetch another
-    if (data_entry_cached.meta.type == RecordType::Empty) {
-      kv_allocator_->Free(
-          SpaceEntry(kv_allocator_->addr2offset_checked(recovering_data_record),
-                     data_entry_cached.header.record_size));
-      continue;
-    }
-
-    // Record has valid type and Checksum is correct
-    // Continue to restore the Record
-    cnt++;
-
-    engine_thread_cache.newest_restored_ts =
-        std::max(data_entry_cached.meta.timestamp,
-                 engine_thread_cache.newest_restored_ts);
-
-    switch (data_entry_cached.meta.type) {
-      case RecordType::SortedElem: {
-        s = restoreSortedElem(static_cast<DLRecord*>(recovering_data_record));
-        break;
-      }
-      case RecordType::SortedHeader: {
-        s = restoreSortedHeader(static_cast<DLRecord*>(recovering_data_record));
-        break;
-      }
-      case RecordType::String: {
-        s = restoreStringRecord(
-            static_cast<StringRecord*>(recovering_data_record),
-            data_entry_cached);
-        break;
-      }
-      case RecordType::ListHeader: {
-        s = listRestoreList(static_cast<DLRecord*>(recovering_data_record));
-        break;
-      }
-      case RecordType::ListElem: {
-        s = listRestoreElem(static_cast<DLRecord*>(recovering_data_record));
-        break;
-      }
-      case RecordType::HashHeader: {
-        s = restoreHashHeader(static_cast<DLRecord*>(recovering_data_record));
-        break;
-      }
-      case RecordType::HashElem: {
-        s = restoreHashElem(static_cast<DLRecord*>(recovering_data_record));
-        break;
-      }
-      default: {
-        GlobalLogger.Error(
-            "Invalid Record type when recovering. Trying "
-            "restoring record. Record data type: %u\n",
-            data_entry_cached.meta.type);
-        s = Status::Abort;
-      }
-    }
-    if (s != Status::Ok) {
-      break;
-    }
-  }
-  restored_.fetch_add(cnt);
-  return s;
-}
-
-bool KVEngine::validateRecord(void* data_record) {
-  assert(data_record);
-  DataEntry* entry = static_cast<DataEntry*>(data_record);
-  switch (entry->meta.type) {
-    case RecordType::String: {
-      return static_cast<StringRecord*>(data_record)->Validate();
-    }
-    case RecordType::SortedHeader:
-    case RecordType::SortedElem:
-    case RecordType::HashHeader:
-    case RecordType::HashElem:
-    case RecordType::ListHeader:
-    case RecordType::ListElem: {
-      return static_cast<DLRecord*>(data_record)->Validate();
-    }
-    default:
-      kvdk_assert(false, "Unsupported type in validateRecord()!");
-      return false;
-  }
-}
-
-Status KVEngine::batchWriteRollbackLogs() {
-  DIR* dir = opendir(batch_log_dir_.c_str());
-  if (dir == NULL) {
-    GlobalLogger.Error("Fail to opendir in batchWriteRollbackLogs. %s\n",
-                       strerror(errno));
-    return Status::IOError;
-  }
-  dirent* entry;
-  while ((entry = readdir(dir)) != NULL) {
-    std::string fname = std::string{entry->d_name};
-    if (fname == "." || fname == "..") {
-      continue;
-    }
-    std::string log_file_path = batch_log_dir_ + fname;
-    size_t mapped_len;
-    int is_pmem;
-    void* addr = pmem_map_file(log_file_path.c_str(), BatchWriteLog::MaxBytes(),
-                               PMEM_FILE_CREATE, 0666, &mapped_len, &is_pmem);
-    if (addr == NULL) {
-      GlobalLogger.Error("Fail to Rollback BatchLog file. %s\n",
-                         strerror(errno));
-      return Status::PMemMapFileError;
-    }
-    kvdk_assert(is_pmem != 0 && mapped_len >= BatchWriteLog::MaxBytes(), "");
-
-    BatchWriteLog log;
-    log.DecodeFrom(static_cast<char*>(addr));
-
-    Status s;
-    for (auto iter = log.ListLogs().rbegin(); iter != log.ListLogs().rend();
-         ++iter) {
-      s = listRollback(*iter);
-      if (s != Status::Ok) {
-        return s;
-      }
-    }
-    for (auto iter = log.HashLogs().rbegin(); iter != log.HashLogs().rend();
-         ++iter) {
-      s = hashListRollback(*iter);
-      if (s != Status::Ok) {
-        return s;
-      }
-    }
-    for (auto iter = log.SortedLogs().rbegin(); iter != log.SortedLogs().rend();
-         ++iter) {
-      s = sortedRollback(*iter);
-      if (s != Status::Ok) {
-        return s;
-      }
-    }
-    for (auto iter = log.StringLogs().rbegin(); iter != log.StringLogs().rend();
-         ++iter) {
-      s = stringRollback(log.Timestamp(), *iter);
-      if (s != Status::Ok) {
-        return s;
-      }
-    }
-    log.MarkInitializing(static_cast<char*>(addr));
-    if (pmem_unmap(addr, mapped_len) != 0) {
-      GlobalLogger.Error("Fail to Rollback BatchLog file. %s\n",
-                         strerror(errno));
-      return Status::PMemMapFileError;
-    }
-  }
-  closedir(dir);
-  std::string cmd{"rm -rf " + batch_log_dir_ + "*"};
-  [[gnu::unused]] int ret = system(cmd.c_str());
-
-  return Status::Ok;
-}
-
-void KVEngine::backgroundPMemAllocatorOrgnizer() {
-  auto interval = std::chrono::milliseconds{
-      static_cast<std::uint64_t>(configs_.background_work_interval * 1000)};
-  while (!bg_work_signals_.terminating) {
-    {
-      std::unique_lock<SpinMutex> ul(bg_work_signals_.terminating_lock);
-      if (!bg_work_signals_.terminating) {
-        bg_work_signals_.pmem_allocator_organizer_cv.wait_for(ul, interval);
-      }
-    }
-    dynamic_cast<PMEMAllocator*>(kv_allocator_.get())->BackgroundWork();
-  }
-}
-#endif  // #ifdef KVDK_WITH_PMEM
-
 KVEngine::~KVEngine() {
   GlobalLogger.Info("Closing instance ... \n");
   GlobalLogger.Info("Waiting bg threads exit ... \n");
@@ -482,12 +67,6 @@ Status KVEngine::Open(const StringView engine_path, Engine** engine_ptr,
                     engine_path_str.c_str());
   KVEngine* engine = new KVEngine(configs);
   Status s = engine->init(engine_path_str, configs);
-
-#ifdef KVDK_WITH_PMEM
-  if (s == Status::Ok && configs.enable_pmem) {
-    s = engine->restoreExistingData();
-  }
-#endif
 
   if (s == Status::Ok) {
     *engine_ptr = engine;
@@ -545,11 +124,6 @@ void KVEngine::ReportMemoryUsage() {
 void KVEngine::startBackgroundWorks() {
   std::unique_lock<SpinMutex> ul(bg_work_signals_.terminating_lock);
   bg_work_signals_.terminating = false;
-#ifdef KVDK_WITH_PMEM
-  if (configs_.enable_pmem) {
-    bg_threads_.emplace_back(&KVEngine::backgroundPMemAllocatorOrgnizer, this);
-  }
-#endif
   bg_threads_.emplace_back(&KVEngine::backgroundMemoryUsageReporter, this);
 
   bool close_reclaimer = false;
@@ -566,8 +140,7 @@ void KVEngine::terminateBackgroundWorks() {
     std::unique_lock<SpinMutex> ul(bg_work_signals_.terminating_lock);
     bg_work_signals_.terminating = true;
     bg_work_signals_.dram_cleaner_cv.notify_all();
-    bg_work_signals_.pmem_allocator_organizer_cv.notify_all();
-    bg_work_signals_.pmem_usage_reporter_cv.notify_all();
+    bg_work_signals_.memory_usage_reporter_cv.notify_all();
   }
   for (auto& t : bg_threads_) {
     t.join();
@@ -582,70 +155,11 @@ Status KVEngine::init(const std::string& name, const Configs& configs) {
     return s;
   }
 
-#ifdef KVDK_WITH_PMEM
-  if (configs_.enable_pmem) {
-    if (!configs.use_devdax_mode) {
-      dir_ = format_dir_path(name);
-      int res = create_dir_if_missing(dir_);
-      if (res != 0) {
-        GlobalLogger.Error("Create engine dir %s error\n", dir_.c_str());
-        return Status::IOError;
-      }
-
-      batch_log_dir_ = dir_ + "batch_logs/";
-      if (create_dir_if_missing(batch_log_dir_) != 0) {
-        GlobalLogger.Error("Create batch log dir %s error\n",
-                           batch_log_dir_.c_str());
-        return Status::IOError;
-      }
-
-      data_file_ = data_file();
-
-    } else {
-      data_file_ = name;
-
-      // The devdax mode need to execute the shell scripts/init_devdax.sh,
-      // then a fsdax model namespace will be created and the
-      // configs_.devdax_meta_dir will be created on a xfs file system with a
-      // fsdax namespace
-      dir_ = format_dir_path(configs_.devdax_meta_dir);
-
-      batch_log_dir_ = dir_ + "batch_logs/";
-      if (create_dir_if_missing(batch_log_dir_) != 0) {
-        GlobalLogger.Error("Create batch log dir %s error\n",
-                           batch_log_dir_.c_str());
-        return Status::IOError;
-      }
-    }
-
-    s = persistOrRecoverImmutableConfigs();
-    if (s != Status::Ok) {
-      return s;
-    }
-
-    kv_allocator_.reset(PMEMAllocator::NewPMEMAllocator(
-        data_file_, configs_.pmem_file_size, configs_.pmem_segment_blocks,
-        configs_.pmem_block_size, configs_.max_access_threads,
-        configs_.populate_pmem_space, configs_.use_devdax_mode,
-        &version_controller_));
-    kv_allocator_->SetMaxAccessThreads(configs_.max_access_threads);
-  } else {
-#else
-  if (configs.enable_pmem) {
-    GlobalLogger.Error(
-        "Init kvdk error, configs.enable_pmem is true, "
-        "but kvdk was not compiled with `-DWITH_PMEM=ON`\n");
-    return Status::Abort;
-  }
   (void)name;  // To suppress compile warnings
-#endif  // #ifdef KVDK_WITH_PMEM
-    Allocator* kv_allocator = new KVDK_VOLATILE_KV_MEMORY_ALLOCATOR_CLASS();
-    kv_allocator->SetMaxAccessThreads(configs_.max_access_threads);
-    kv_allocator->SetDestMemoryNodes(configs_.dest_memory_nodes);
-    kv_allocator_.reset(kv_allocator);
-#ifdef KVDK_WITH_PMEM
-  }
-#endif  // #ifdef KVDK_WITH_PMEM
+  Allocator* kv_allocator = new KVDK_VOLATILE_KV_MEMORY_ALLOCATOR_CLASS();
+  kv_allocator->SetMaxAccessThreads(configs_.max_access_threads);
+  kv_allocator->SetDestMemoryNodes(configs_.dest_memory_nodes);
+  kv_allocator_.reset(kv_allocator);
 
   Allocator* skiplist_node_allocator =
       new KVDK_SKIPLIST_NODE_MEMORY_ALLOCATOR_CLASS();
@@ -678,12 +192,6 @@ Status KVEngine::init(const std::string& name, const Configs& configs) {
     GlobalLogger.Error("Init kvdk basic components error\n");
     return Status::Abort;
   }
-
-#ifdef KVDK_WITH_PMEM
-  if (configs_.enable_pmem) {
-    s = initOrRestoreCheckpoint();
-  }
-#endif  // #ifdef KVDK_WITH_PMEM
 
   registerComparator("default", compare_string_view);
   return s;
@@ -1013,7 +521,7 @@ Status KVEngine::restoreDataFromBackup(const std::string& backup_log) {
 }
 
 Status KVEngine::checkPMemConfigs(const Configs& configs) {
-  if (configs.pmem_block_size < kMinPMemBlockSize) {
+  if (configs.pmem_block_size < kMinMemoryBlockSize) {
     GlobalLogger.Error("pmem block size too small\n");
     return Status::InvalidConfiguration;
   }
@@ -1086,28 +594,7 @@ Status KVEngine::BatchWrite(std::unique_ptr<WriteBatch> const& batch) {
 }
 
 Status KVEngine::maybeInitBatchLogFile() {
-#ifdef KVDK_WITH_PMEM
-  if (configs_.enable_pmem) {
-    kvdk_assert(ThreadManager::ThreadID() >= 0, "");
-    auto work_id = ThreadManager::ThreadID() % configs_.max_access_threads;
-    auto& tc = engine_thread_cache_[work_id];
-    if (tc.batch_log == nullptr) {
-      int is_pmem;
-      size_t mapped_len;
-      std::string log_file_name = batch_log_dir_ + std::to_string(work_id);
-      void* addr =
-          pmem_map_file(log_file_name.c_str(), BatchWriteLog::MaxBytes(),
-                        PMEM_FILE_CREATE, 0666, &mapped_len, &is_pmem);
-      if (addr == NULL) {
-        GlobalLogger.Error("Fail to Init BatchLog file. %s\n", strerror(errno));
-        return Status::PMemMapFileError;
-      }
-      kvdk_assert(is_pmem != 0 && mapped_len >= BatchWriteLog::MaxBytes(), "");
-      tc.batch_log = static_cast<char*>(addr);
-    }
-  }
-#endif  // #ifdef KVDK_WITH_PMEM
-
+  // TODO Implement batch write without pmem
   return Status::Ok;
 }
 
@@ -1417,7 +904,7 @@ Status KVEngine::TypeOf(StringView key, ValueType* type) {
   return res.s == Status::Outdated ? Status::NotFound : res.s;
 }
 
-Status KVEngine::Expire(const StringView str, TTLType ttl_time) {
+Status KVEngine::Expire(const StringView key, TTLType ttl_time) {
   auto thread_holder = AcquireAccessThread();
 
   int64_t base_time = TimeUtils::millisecond_time();
@@ -1426,10 +913,10 @@ Status KVEngine::Expire(const StringView str, TTLType ttl_time) {
   }
 
   ExpireTimeType expired_time = TimeUtils::TTLToExpireTime(ttl_time, base_time);
-  auto ul = hash_table_->AcquireLock(str);
+  auto ul = hash_table_->AcquireLock(key);
   auto snapshot_holder = version_controller_.GetLocalSnapshotHolder();
   // TODO: maybe have a wrapper function(lookupKeyAndMayClean).
-  auto lookup_result = lookupKey<false>(str, ExpirableRecordType);
+  auto lookup_result = lookupKey<false>(key, ExpirableRecordType);
   if (lookup_result.s == Status::Outdated) {
     return Status::NotFound;
   }
@@ -1441,7 +928,7 @@ Status KVEngine::Expire(const StringView str, TTLType ttl_time) {
         ul.unlock();
         version_controller_.ReleaseLocalSnapshot();
         lookup_result.s = Modify(
-            str,
+            key,
             [](const std::string* old_val, std::string* new_val, void*) {
               new_val->assign(*old_val);
               return ModifyOperation::Write;
@@ -1595,28 +1082,17 @@ namespace KVDK_NAMESPACE {
 /// TODO: move this into VersionController.
 Snapshot* KVEngine::GetSnapshot(bool make_checkpoint) {
   Snapshot* ret = version_controller_.NewGlobalSnapshot();
-
-  if (make_checkpoint) {
-#ifdef KVDK_WITH_PMEM
-    if (configs_.enable_pmem) {
-      std::lock_guard<std::mutex> lg(checkpoint_lock_);
-      persist_checkpoint_->MakeCheckpoint(ret);
-      pmem_persist(persist_checkpoint_, sizeof(CheckPoint));
-    }
-#endif
-  }
-
   return ret;
 }
 
 void KVEngine::backgroundMemoryUsageReporter() {
   auto interval = std::chrono::milliseconds{
-      static_cast<std::uint64_t>(configs_.report_pmem_usage_interval * 1000)};
+      static_cast<std::uint64_t>(configs_.report_memory_usage_interval * 1000)};
   while (!bg_work_signals_.terminating) {
     {
       std::unique_lock<SpinMutex> ul(bg_work_signals_.terminating_lock);
       if (!bg_work_signals_.terminating) {
-        bg_work_signals_.pmem_usage_reporter_cv.wait_for(ul, interval);
+        bg_work_signals_.memory_usage_reporter_cv.wait_for(ul, interval);
       }
     }
     ReportMemoryUsage();

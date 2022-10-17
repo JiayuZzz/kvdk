@@ -73,16 +73,6 @@ void Java_io_pmem_kvdk_Configs_setPopulatePMemSpace(JNIEnv*, jobject,
 
 /*
  * Class:     io_pmem_kvdk_Configs
- * Method:    setEnablePMem
- * Signature: (JZ)V
- */
-void Java_io_pmem_kvdk_Configs_setEnablePMem(JNIEnv*, jobject, jlong handle,
-                                             jboolean enable) {
-  reinterpret_cast<KVDK_NAMESPACE::Configs*>(handle)->enable_pmem = enable;
-}
-
-/*
- * Class:     io_pmem_kvdk_Configs
  * Method:    setDestMemoryNodes
  * Signature: (JLjava/lang/String;)V
  */

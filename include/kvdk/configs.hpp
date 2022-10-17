@@ -54,7 +54,7 @@ struct Configs {
 
   // The minimum allocation unit of PMem space
   //
-  // It should minimum align to kMinPMemBlockSize (see types.hpp) bytes.
+  // It should minimum align to kMinMemoryBlockSize (see types.hpp) bytes.
   uint32_t pmem_block_size = 64;
 
   // The number of blocks in a PMem segment
@@ -89,9 +89,9 @@ struct Configs {
   double background_work_interval = 5.0;
 
   // Time interval that the background thread report PMem usage by GlobalLogger.
-  // report_pmem_usage_interval less than background_work_interval will be
+  // report_memory_usage_interval less than background_work_interval will be
   // ignored.
-  double report_pmem_usage_interval = 1000000.0;
+  double report_memory_usage_interval = 1000000.0;
 
   // Support the devdax model with PMem
   //
@@ -135,9 +135,6 @@ struct Configs {
 
   // Background clean thread numbers.
   uint64_t clean_threads = 8;
-
-  // Enable PMem storage
-  bool enable_pmem = true;
 
   // Set the memory nodes where volatile KV memory allocator binds to.
   // There is no effect when the configured value is empty or invalid.

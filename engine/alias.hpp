@@ -13,7 +13,6 @@ enum class WriteOp { Put, Delete };
 
 // Internal types
 using MemoryOffsetType = std::uint64_t;
-using PMemOffsetType = MemoryOffsetType;
 using TimestampType = std::uint64_t;
 
 const uint64_t kMaxCachedOldRecords = 1024;

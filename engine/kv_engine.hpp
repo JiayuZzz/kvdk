@@ -59,15 +59,6 @@ class KVEngine : public Engine {
                 const Snapshot* snapshot) override;
 
   void ReleaseSnapshot(const Snapshot* snapshot) override {
-    {
-#ifdef KVDK_WITH_PMEM
-      if (configs_.enable_pmem) {
-        std::lock_guard<std::mutex> lg(checkpoint_lock_);
-        persist_checkpoint_->MaybeRelease(
-            static_cast<const SnapshotImpl*>(snapshot));
-      }
-#endif
-    }
     version_controller_.ReleaseSnapshot(
         static_cast<const SnapshotImpl*>(snapshot));
   }
@@ -604,8 +595,7 @@ class KVEngine : public Engine {
     BackgroundWorkSignals() = default;
     BackgroundWorkSignals(const BackgroundWorkSignals&) = delete;
 
-    std::condition_variable_any pmem_usage_reporter_cv;
-    std::condition_variable_any pmem_allocator_organizer_cv;
+    std::condition_variable_any memory_usage_reporter_cv;
     std::condition_variable_any dram_cleaner_cv;
 
     SpinMutex terminating_lock;
@@ -620,45 +610,6 @@ class KVEngine : public Engine {
   // recovering
   // Todo: do not hard code
   std::atomic<uint64_t> next_recovery_tid_{0};
-
-#ifdef KVDK_WITH_PMEM
-  Status initOrRestoreCheckpoint();
-  Status persistOrRecoverImmutableConfigs();
-  Status restoreData();
-  Status restoreExistingData();
-  Status restoreSortedHeader(DLRecord* header);
-  Status restoreSortedElem(DLRecord* elem);
-  Status restoreStringRecord(StringRecord* data_record,
-                             const DataEntry& cached_entry);
-
-  Status sortedRollback(BatchWriteLog::SortedLogEntry const& entry);
-  Status listRollback(BatchWriteLog::ListLogEntry const& entry);
-  Status hashListRollback(BatchWriteLog::HashLogEntry const& entry);
-
-  Status listRestoreElem(DLRecord* data_record);
-  Status listRestoreList(DLRecord* data_record);
-
-  Status restoreHashElem(DLRecord* rec);
-  Status restoreHashHeader(DLRecord* rec);
-
-  bool validateRecord(void* data_record);
-
-  // If this instance is a backup of another kvdk instance
-  bool recoverToCheckpoint() {
-    return configs_.recover_to_checkpoint && persist_checkpoint_->Valid();
-  }
-  Status batchWriteRollbackLogs();
-  // Run in background to merge and balance free space of PMem Allocator
-  void backgroundPMemAllocatorOrgnizer();
-
-  std::unique_ptr<SortedCollectionRebuilder> sorted_rebuilder_;
-  std::unique_ptr<HashListRebuilder> hash_rebuilder_;
-  std::unique_ptr<ListRebuilder> list_rebuilder_;
-
-  CheckPoint* persist_checkpoint_;
-  std::mutex checkpoint_lock_;
-
-#endif  // #ifdef KVDK_WITH_PMEM
 };
 
 }  // namespace KVDK_NAMESPACE

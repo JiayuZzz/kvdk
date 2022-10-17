@@ -55,7 +55,7 @@ using ModifyFunc = std::function<ModifyOperation(
 constexpr ExpireTimeType kPersistTime = INT64_MAX;
 constexpr TTLType kPersistTTL = INT64_MAX;
 constexpr TTLType kInvalidTTL = 0;
-constexpr uint32_t kMinPMemBlockSize = 32;
+constexpr uint32_t kMinMemoryBlockSize = 32;
 }  // namespace KVDK_NAMESPACE
 
 #if !__cpp_lib_string_view

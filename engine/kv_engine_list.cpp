@@ -524,16 +524,6 @@ void KVEngine::ListIteratorRelease(ListIterator* list) {
   delete iter;
 }
 
-#ifdef KVDK_WITH_PMEM
-Status KVEngine::listRestoreElem(DLRecord* pmp_record) {
-  return list_rebuilder_->AddElem(pmp_record);
-}
-
-Status KVEngine::listRestoreList(DLRecord* pmp_record) {
-  return list_rebuilder_->AddHeader(pmp_record);
-}
-#endif
-
 Status KVEngine::listFind(StringView list_name, List** list) {
   auto result = lookupKey<false>(list_name, RecordType::ListHeader);
   if (result.s == Status::Outdated) {
@@ -613,11 +603,5 @@ Status KVEngine::listBatchPopImpl(StringView list_name, ListPos pos, size_t n,
   BatchWriteLog::MarkCommitted(tc.batch_log);
   return s;
 }
-
-#ifdef KVDK_WITH_PMEM
-Status KVEngine::listRollback(const BatchWriteLog::ListLogEntry& log) {
-  return list_rebuilder_->Rollback(log);
-}
-#endif
 
 }  // namespace KVDK_NAMESPACE

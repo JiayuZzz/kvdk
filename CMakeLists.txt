@@ -47,22 +47,6 @@ endif()
 set (KVDK_SHARED_LIB_LINK_LIBS pthread gflags hwloc atomic)
 set (KVDK_STATIC_LIB_LINK_LIBS "")
 
-# pmem support
-option(WITH_PMEM "Build with libpmem to support persistent storage" ON)
-if (WITH_PMEM)
-    message(STATUS "PMem support is enabled")
-    find_library(LIBPMEM_LIB pmem)
-    if(NOT LIBPMEM_LIB)
-        message(FATAL_ERROR "libpmem library not found")
-    else()
-        message(STATUS "Found libpmem: ${LIBPMEM_LIB}")
-    endif()
-    list(APPEND KVDK_SHARED_LIB_LINK_LIBS pmem)
-    add_compile_definitions(KVDK_WITH_PMEM)
-else ()
-    message(STATUS "PMem support is disabled")
-endif ()
-
 # jemalloc
 option(WITH_JEMALLOC "Build with jemalloc to support memory management with jemalloc" ON)
 if (WITH_JEMALLOC)
@@ -108,9 +92,7 @@ set(SOURCES
         engine/list_collection/list.cpp
         engine/write_batch_impl.cpp
         engine/dram_allocator.cpp
-        engine/pmem_allocator/pmem_allocator.cpp
         engine/thread_manager.cpp
-        engine/pmem_allocator/free_list.cpp
         engine/data_record.cpp
         engine/dl_list.cpp
         engine/version/old_records_cleaner.cpp
@@ -158,7 +140,6 @@ option(BUILD_TUTORIAL "Build the tutorial" ON)
 add_subdirectory(examples/tutorial)
 
 option(BUILD_GRAPH_SIMULATOR "Build the graph simulator" ON)
-add_subdirectory(examples/graph_sim)
 
 add_custom_target(checkers ALL)
 add_custom_target(cppstyle)
@@ -185,8 +166,6 @@ endif ()
 
 add_cppstyle(src ${CMAKE_CURRENT_SOURCE_DIR}/engine/*.c*
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/*.h*
-        ${CMAKE_CURRENT_SOURCE_DIR}/engine/pmem_allocator/*.h*
-        ${CMAKE_CURRENT_SOURCE_DIR}/engine/pmem_allocator/*.c*
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/utils/*.c*
         ${CMAKE_CURRENT_SOURCE_DIR}/engine/utils/*.h*
         ${CMAKE_CURRENT_SOURCE_DIR}/examples/tutorial/*.c*
@@ -202,17 +181,6 @@ if(WITH_JNI OR JNI)
     set(KVDK_STATIC_LIB engine-static)
 
     include(FindPackageHandleStandardArgs)
-
-    # libpmem.a
-    if(WITH_PMEM)
-        find_library(LIBPMEM_STATIC_LIB NAMES "${CMAKE_STATIC_LIBRARY_PREFIX}pmem${CMAKE_STATIC_LIBRARY_SUFFIX}")
-        find_package_handle_standard_args(libpmem REQUIRED_VARS LIBPMEM_STATIC_LIB)
-        if(NOT libpmem_FOUND)
-            message(FATAL_ERROR "libpmem.a not found")
-        endif()
-
-        list(APPEND KVDK_STATIC_LIB_LINK_LIBS ${LIBPMEM_STATIC_LIB})
-    endif()
 
     add_library(${KVDK_STATIC_LIB} STATIC ${SOURCES})
     target_include_directories(${KVDK_STATIC_LIB} PUBLIC ./include ./extern)

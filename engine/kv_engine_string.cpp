@@ -236,45 +236,6 @@ Status KVEngine::stringPutImpl(const StringView& key, const StringView& value,
   return Status::Ok;
 }
 
-#ifdef KVDK_WITH_PMEM
-Status KVEngine::restoreStringRecord(StringRecord* data_record,
-                                     const DataEntry& cached_entry) {
-  assert(data_record->GetRecordType() == RecordType::String);
-  if (recoverToCheckpoint() &&
-      cached_entry.meta.timestamp > persist_checkpoint_->CheckpointTS()) {
-    kv_allocator_->PurgeAndFree<StringRecord>(data_record);
-    return Status::Ok;
-  }
-
-  auto view = data_record->Key();
-  std::string key{view.data(), view.size()};
-  auto ul = hash_table_->AcquireLock(key);
-  auto lookup_result = hash_table_->Lookup<true>(key, RecordType::String);
-
-  if (lookup_result.s == Status::MemoryOverflow) {
-    return lookup_result.s;
-  }
-
-  if (lookup_result.s == Status::Ok &&
-      lookup_result.entry.GetIndex().string_record->GetTimestamp() >=
-          cached_entry.meta.timestamp) {
-    kv_allocator_->PurgeAndFree<StringRecord>(data_record);
-    return Status::Ok;
-  }
-
-  insertKeyOrElem(lookup_result, cached_entry.meta.type,
-                  cached_entry.meta.status, data_record);
-  data_record->PersistOldVersion(kNullMemoryOffset);
-
-  if (lookup_result.s == Status::Ok) {
-    kv_allocator_->PurgeAndFree<StringRecord>(
-        lookup_result.entry.GetIndex().string_record);
-  }
-
-  return Status::Ok;
-}
-#endif
-
 Status KVEngine::stringWritePrepare(StringWriteArgs& args, TimestampType ts) {
   args.res = lookupKey<true>(args.key, RecordType::String);
   if (args.res.s != Status::Ok && args.res.s != Status::NotFound &&

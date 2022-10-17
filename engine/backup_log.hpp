@@ -8,7 +8,6 @@
 
 #include <string>
 
-#include "configs.hpp"
 #include "data_record.hpp"
 #include "kvdk/configs.hpp"
 #include "kvdk/types.hpp"

@@ -5,11 +5,6 @@
 #pragma once
 
 #include <immintrin.h>
-
-#ifdef KVDK_WITH_PMEM
-#include <libpmem.h>
-#endif
-
 #include <x86intrin.h>
 
 #include "alias.hpp"
@@ -86,16 +81,13 @@ struct DataEntry {
 
   DataEntry() = default;
 
-  void Destroy() {
-    meta.type = RecordType::Empty;
-    pmem_persist(&meta.type, sizeof(RecordType));
-  }
+  void Destroy() { meta.type = RecordType::Empty; }
 
   // TODO jiayu: use function to access these
   DataHeader header;
   DataMeta meta;
 };
-static_assert(sizeof(DataEntry) <= kMinPMemBlockSize);
+static_assert(sizeof(DataEntry) <= kMinMemoryBlockSize);
 
 struct StringRecord {
  public:
@@ -120,7 +112,7 @@ struct StringRecord {
     return record;
   }
 
-  // Construct and persist a string record at pmem address "addr"
+  // Construct a string record at "addr"
   static StringRecord* PersistStringRecord(
       void* addr, uint32_t record_size, TimestampType timestamp,
       RecordType type, RecordStatus status, MemoryOffsetType old_version,
@@ -343,7 +335,7 @@ struct DLRecord {
   bool HasExpired() const { return TimeUtils::CheckIsExpired(GetExpireTime()); }
   TimestampType GetTimestamp() const { return entry.meta.timestamp; }
 
-  // Construct and persist a dl record to PMem address "addr"
+  // Construct a dl record at "addr"
   static DLRecord* PersistDLRecord(
       void* addr, uint32_t record_size, TimestampType timestamp,
       RecordType type, RecordStatus status, MemoryOffsetType old_version,
