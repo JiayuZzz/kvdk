@@ -13,7 +13,7 @@
 
 #include "../engine/kv_engine.hpp"
 #include "../engine/utils/sync_point.hpp"
-#include "kvdk/engine.hpp"
+#include "kvdk/volatile/engine.hpp"
 #include "test_util.h"
 
 DEFINE_string(path, "/mnt/pmem0/kvdk_unit_test",

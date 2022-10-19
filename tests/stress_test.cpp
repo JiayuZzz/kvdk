@@ -17,8 +17,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "kvdk/engine.hpp"
-#include "kvdk/types.hpp"
+#include "kvdk/volatile/engine.hpp"
+#include "kvdk/volatile/types.hpp"
 #include "test_util.h"
 
 DEFINE_bool(

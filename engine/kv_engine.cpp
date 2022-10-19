@@ -19,7 +19,7 @@
 #include "backup_log.hpp"
 #include "dram_allocator.hpp"
 #include "hash_collection/iterator.hpp"
-#include "kvdk/engine.hpp"
+#include "kvdk/volatile/engine.hpp"
 #include "list_collection/iterator.hpp"
 #include "sorted_collection/iterator.hpp"
 #include "structures.hpp"
