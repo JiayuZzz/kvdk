@@ -424,7 +424,6 @@ class EngineTestBase : public testing::Test {
   /// Override SetUpParameters to provide different parameters
   /// Default configure parameters
   size_t n_hash_bucket;
-  size_t n_blocks_per_segment;
   size_t t_background_work_interval;
 
   /// Test specific parameters
@@ -468,7 +467,6 @@ class EngineTestBase : public testing::Test {
     SetUpParameters();
 
     configs.hash_bucket_num = n_hash_bucket;
-    configs.pmem_segment_blocks = n_blocks_per_segment;
     configs.background_work_interval = t_background_work_interval;
     configs.max_access_threads = n_thread + 1;
     configs.log_level = kvdk::LogLevel::Debug;
@@ -694,7 +692,6 @@ class EngineStressTest : public EngineTestBase {
     /// Default configure parameters
     // Less buckets to increase hash collisions
     n_hash_bucket = (1ULL << 20);
-    n_blocks_per_segment = (1ULL << 10);
     t_background_work_interval = 1;
 
     /// Test specific parameters
@@ -839,7 +836,6 @@ class EngineHotspotTest : public EngineTestBase {
     /// Default configure parameters
     // Less buckets to increase hash collisions
     n_hash_bucket = (1ULL << 20);
-    n_blocks_per_segment = (1ULL << 20);
     t_background_work_interval = 1;
 
     /// Test specific parameters

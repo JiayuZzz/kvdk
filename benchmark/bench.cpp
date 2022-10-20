@@ -494,7 +494,6 @@ int main(int argc, char** argv) {
     configs.max_access_threads = FLAGS_max_access_threads;
     configs.opt_large_sorted_collection_recovery =
         FLAGS_opt_large_sorted_collection_restore;
-    configs.use_devdax_mode = FLAGS_use_devdax_mode;
     Status s = Engine::Open(FLAGS_path, &engine, configs, stdout);
     if (s != Status::Ok) {
       throw std::runtime_error{

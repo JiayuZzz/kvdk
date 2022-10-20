@@ -50,7 +50,6 @@ class EngineBasicTest : public testing::Test {
     // No logs by default, for debug, set it to All
     configs.log_level = LogLevel::Debug;
     configs.hash_bucket_num = (1 << 10);
-    configs.pmem_segment_blocks = 8 * 1024;
     // For faster test, no interval so it would not block engine closing
     configs.background_work_interval = 0.1;
     configs.max_access_threads = 8;
@@ -1148,7 +1147,6 @@ TEST_F(EngineBasicTest, TestSeek) {
 }
 
 TEST_F(EngineBasicTest, TestStringLargeValue) {
-  configs.pmem_segment_blocks = (1UL << 24);
   ASSERT_EQ(Engine::Open(db_path.c_str(), &engine, configs, stdout),
             Status::Ok);
 

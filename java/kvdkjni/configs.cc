@@ -29,18 +29,6 @@ void Java_io_pmem_kvdk_Configs_setMaxAccessThreads(JNIEnv*, jobject,
 
 /*
  * Class:     io_pmem_kvdk_Configs
- * Method:    setPMemSegmentBlocks
- * Signature: (JJ)V
- */
-void Java_io_pmem_kvdk_Configs_setPMemSegmentBlocks(JNIEnv*, jobject,
-                                                    jlong handle,
-                                                    jlong blocks) {
-  reinterpret_cast<KVDK_NAMESPACE::Configs*>(handle)->pmem_segment_blocks =
-      blocks;
-}
-
-/*
- * Class:     io_pmem_kvdk_Configs
  * Method:    setHashBucketNum
  * Signature: (JJ)V
  */

@@ -41,7 +41,6 @@ int main()
       // Configure for a tiny KVDK instance.
       // Please refer to "Configuration" section in user documentation for
       // details.
-      engine_configs.pmem_segment_blocks = (1ull << 8);
       engine_configs.hash_bucket_num = (1ull << 10);
     }
     // The KVDK instance is mounted as a directory
@@ -420,13 +419,6 @@ You can call KVDK API with any number of threads, but if your parallel threads m
 
 ### Clean Threads
 KVDK reclaim space of updated/deleted data in background with dynamic number of clean threads, you can specify max clean thread number with `kvdk::Configs::clean_threads`. Defaulted to 8, you can config more clean threads in delete intensive workloads to avoid space be exhausted.
-
-**This parameter is immutable after initialization of the KVDK instance.**
-
-### Blocks per Segment
-Specified by `kvdk::Configs::pmem_segment_blocks`. Defaulted to 2^21. Segment size determines the maximum size for a KV-Pair. 
-
-Default Blocks per Segment and Block Size parameters will limit the size for a KV-Pair to 64MB(Actually slightly smaller than 64MB, for checksum and other information associated with the KV-Pair).
 
 **This parameter is immutable after initialization of the KVDK instance.**
 

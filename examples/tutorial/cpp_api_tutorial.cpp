@@ -419,7 +419,6 @@ int main() {
     // Configure for a tiny KVDK instance.
     // Please refer to "Configuration" section in user documentation for
     // details.
-    engine_configs.pmem_segment_blocks = (1ull << 8);
     engine_configs.hash_bucket_num = (1ull << 10);
   }
   std::string engine_path{pmem_path};
