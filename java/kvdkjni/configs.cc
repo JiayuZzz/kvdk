@@ -51,18 +51,6 @@ void Java_io_pmem_kvdk_Configs_setHashBucketNum(JNIEnv*, jobject, jlong handle,
 
 /*
  * Class:     io_pmem_kvdk_Configs
- * Method:    setPopulatePMemSpace
- * Signature: (JZ)V
- */
-void Java_io_pmem_kvdk_Configs_setPopulatePMemSpace(JNIEnv*, jobject,
-                                                    jlong handle,
-                                                    jboolean populate) {
-  reinterpret_cast<KVDK_NAMESPACE::Configs*>(handle)->populate_pmem_space =
-      populate;
-}
-
-/*
- * Class:     io_pmem_kvdk_Configs
  * Method:    setDestMemoryNodes
  * Signature: (JLjava/lang/String;)V
  */

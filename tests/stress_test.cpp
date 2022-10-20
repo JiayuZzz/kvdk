@@ -423,7 +423,6 @@ class EngineTestBase : public testing::Test {
   /// The following parameters are used to configure the test.
   /// Override SetUpParameters to provide different parameters
   /// Default configure parameters
-  bool do_populate_when_initialize;
   size_t n_hash_bucket;
   size_t n_blocks_per_segment;
   size_t t_background_work_interval;
@@ -468,7 +467,6 @@ class EngineTestBase : public testing::Test {
 
     SetUpParameters();
 
-    configs.populate_pmem_space = do_populate_when_initialize;
     configs.hash_bucket_num = n_hash_bucket;
     configs.pmem_segment_blocks = n_blocks_per_segment;
     configs.background_work_interval = t_background_work_interval;
@@ -694,7 +692,6 @@ class EngineStressTest : public EngineTestBase {
  protected:
   virtual void SetUpParameters() override final {
     /// Default configure parameters
-    do_populate_when_initialize = false;
     // Less buckets to increase hash collisions
     n_hash_bucket = (1ULL << 20);
     n_blocks_per_segment = (1ULL << 10);
@@ -840,7 +837,6 @@ class EngineHotspotTest : public EngineTestBase {
  protected:
   virtual void SetUpParameters() override final {
     /// Default configure parameters
-    do_populate_when_initialize = false;
     // Less buckets to increase hash collisions
     n_hash_bucket = (1ULL << 20);
     n_blocks_per_segment = (1ULL << 20);

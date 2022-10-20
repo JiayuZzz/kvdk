@@ -38,17 +38,6 @@ struct Configs {
   // degraded due to synchronization cost
   uint64_t max_access_threads = 64;
 
-  // Populate PMem space while creating a new instance.
-  //
-  // This can improve write performance in runtime, but will take long time to
-  // init the newly created instance.
-  bool populate_pmem_space = true;
-
-  // The minimum allocation unit of PMem space
-  //
-  // It should minimum align to kMinMemoryBlockSize (see types.hpp) bytes.
-  uint32_t pmem_block_size = 64;
-
   // The number of blocks in a PMem segment
   //
   // A PMem segment is a piece of private space of a access thread, so each

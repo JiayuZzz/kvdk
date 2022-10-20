@@ -491,7 +491,6 @@ int main(int argc, char** argv) {
 
   if (bench_data_type != DataType::Blackhole) {
     Configs configs;
-    configs.populate_pmem_space = FLAGS_populate;
     configs.max_access_threads = FLAGS_max_access_threads;
     configs.opt_large_sorted_collection_recovery =
         FLAGS_opt_large_sorted_collection_restore;

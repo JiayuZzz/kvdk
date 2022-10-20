@@ -421,20 +421,12 @@ You can call KVDK API with any number of threads, but if your parallel threads m
 ### Clean Threads
 KVDK reclaim space of updated/deleted data in background with dynamic number of clean threads, you can specify max clean thread number with `kvdk::Configs::clean_threads`. Defaulted to 8, you can config more clean threads in delete intensive workloads to avoid space be exhausted.
 
-### Populate PMem Space
-Specified by `kvdk::Configs::populate_pmem_space`. When set to true to populate pmem space while creating a new instance, KVDK will take extra time to set up. This will improve runtime performance.
-
-### Block Size
-Specified by `kvdk::Configs::pmem_block_size`. Defaulted to 64(Bytes) to align with cache-line. 
-
 **This parameter is immutable after initialization of the KVDK instance.**
 
 ### Blocks per Segment
 Specified by `kvdk::Configs::pmem_segment_blocks`. Defaulted to 2^21. Segment size determines the maximum size for a KV-Pair. 
 
 Default Blocks per Segment and Block Size parameters will limit the size for a KV-Pair to 64MB(Actually slightly smaller than 64MB, for checksum and other information associated with the KV-Pair).
-
-User is suggested to adjust this parameter instead of `kvdk::Configs::pmem_block_size`.
 
 **This parameter is immutable after initialization of the KVDK instance.**
 
