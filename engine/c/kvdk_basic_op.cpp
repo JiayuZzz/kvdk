@@ -20,14 +20,13 @@ void KVDKRegexDestroy(KVDKRegex* re) { delete re; }
 KVDKConfigs* KVDKCreateConfigs() { return new KVDKConfigs; }
 
 void KVDKSetConfigs(KVDKConfigs* kv_config, uint64_t max_access_threads,
-                    uint64_t pmem_file_size, unsigned char populate_pmem_space,
-                    uint32_t pmem_block_size, uint64_t pmem_segment_blocks,
-                    uint64_t hash_bucket_num, uint32_t num_buckets_per_slot) {
+                    unsigned char populate_pmem_space, uint32_t pmem_block_size,
+                    uint64_t pmem_segment_blocks, uint64_t hash_bucket_num,
+                    uint32_t num_buckets_per_slot) {
   kv_config->rep.max_access_threads = max_access_threads;
   kv_config->rep.hash_bucket_num = hash_bucket_num;
   kv_config->rep.num_buckets_per_slot = num_buckets_per_slot;
   kv_config->rep.pmem_block_size = pmem_block_size;
-  kv_config->rep.pmem_file_size = pmem_file_size;
   kv_config->rep.pmem_segment_blocks = pmem_segment_blocks;
   kv_config->rep.populate_pmem_space = populate_pmem_space;
 }

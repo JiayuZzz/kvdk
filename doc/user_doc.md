@@ -39,10 +39,8 @@ int main()
     kvdk::Configs engine_configs;
     {
       // Configure for a tiny KVDK instance.
-      // Approximately 10MB /mnt/pmem0/ space is needed.
       // Please refer to "Configuration" section in user documentation for
       // details.
-      engine_configs.pmem_file_size = (1ull << 20);
       engine_configs.pmem_segment_blocks = (1ull << 8);
       engine_configs.hash_bucket_num = (1ull << 10);
     }
@@ -422,9 +420,6 @@ You can call KVDK API with any number of threads, but if your parallel threads m
 
 ### Clean Threads
 KVDK reclaim space of updated/deleted data in background with dynamic number of clean threads, you can specify max clean thread number with `kvdk::Configs::clean_threads`. Defaulted to 8, you can config more clean threads in delete intensive workloads to avoid space be exhausted.
-
-### PMem File Size
-`kvdk::Configs::pmem_file_size` specifies the space allocated to a KVDK instance. Defaulted to 2^38Bytes = 256GB.
 
 ### Populate PMem Space
 Specified by `kvdk::Configs::populate_pmem_space`. When set to true to populate pmem space while creating a new instance, KVDK will take extra time to set up. This will improve runtime performance.

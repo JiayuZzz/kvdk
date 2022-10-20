@@ -30,7 +30,6 @@ extern void KVDKRegexDestroy(KVDKRegex* re);
 
 extern KVDKConfigs* KVDKCreateConfigs(void);
 extern void KVDKSetConfigs(KVDKConfigs* kv_config, uint64_t max_access_threads,
-                           uint64_t pmem_file_size,
                            unsigned char populate_pmem_space,
                            uint32_t pmem_block_size,
                            uint64_t pmem_segment_blocks,

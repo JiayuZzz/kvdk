@@ -29,16 +29,6 @@ void Java_io_pmem_kvdk_Configs_setMaxAccessThreads(JNIEnv*, jobject,
 
 /*
  * Class:     io_pmem_kvdk_Configs
- * Method:    setPMemFileSize
- * Signature: (JJ)V
- */
-void Java_io_pmem_kvdk_Configs_setPMemFileSize(JNIEnv*, jobject, jlong handle,
-                                               jlong size) {
-  reinterpret_cast<KVDK_NAMESPACE::Configs*>(handle)->pmem_file_size = size;
-}
-
-/*
- * Class:     io_pmem_kvdk_Configs
  * Method:    setPMemSegmentBlocks
  * Signature: (JJ)V
  */

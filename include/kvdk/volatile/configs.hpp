@@ -38,14 +38,6 @@ struct Configs {
   // degraded due to synchronization cost
   uint64_t max_access_threads = 64;
 
-  // Size of PMem space to store KV data, this is not scalable in current
-  // edition.
-  //
-  // Notice that it should be larger than (max_access_threads *
-  // pmem_segment_blocks  * pmem_block_size)
-  // TODO: sacle out
-  uint64_t pmem_file_size = (256ULL << 30);
-
   // Populate PMem space while creating a new instance.
   //
   // This can improve write performance in runtime, but will take long time to

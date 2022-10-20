@@ -493,7 +493,6 @@ int main(int argc, char** argv) {
     Configs configs;
     configs.populate_pmem_space = FLAGS_populate;
     configs.max_access_threads = FLAGS_max_access_threads;
-    configs.pmem_file_size = FLAGS_space;
     configs.opt_large_sorted_collection_recovery =
         FLAGS_opt_large_sorted_collection_restore;
     configs.use_devdax_mode = FLAGS_use_devdax_mode;
