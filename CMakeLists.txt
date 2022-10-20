@@ -87,7 +87,6 @@ set(SOURCES
         engine/logger.cpp
         engine/hash_table.cpp
         engine/sorted_collection/skiplist.cpp
-        engine/sorted_collection/rebuilder.cpp
         engine/hash_collection/hash_list.cpp
         engine/list_collection/list.cpp
         engine/write_batch_impl.cpp

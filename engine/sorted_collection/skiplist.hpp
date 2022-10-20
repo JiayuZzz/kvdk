@@ -20,7 +20,6 @@
 #include "../utils/utils.hpp"
 #include "../write_batch_impl.hpp"
 #include "kvdk/volatile/engine.hpp"
-#include "rebuilder.hpp"
 
 namespace KVDK_NAMESPACE {
 static const uint8_t kMaxHeight = 32;
